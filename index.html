@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StreamScope</title>
+<meta name="description" content="Lokalna analiza jakości game streamingu: Vibepollo/Sunshine (host) + StreamLight/Moonlight (klient).">
+<meta name="theme-color" content="#0B7A83">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230B7A83'/%3E%3Cpath d='M5 21l6-7 5 4 5-9 6 6' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <div class="eyebrow">Vibepollo / Sunshine → StreamLight / Moonlight</div>
+      <h1>StreamScope</h1>
+      <p>Benchmark i diagnostyka sesji game streamingu. Wrzuć plik sesji hosta i log klienta z tego samego wieczoru, wybierz fragment rozgrywki, porównaj z poprzednimi sesjami.</p>
+    </div>
+    <div class="privacy">Pliki są przetwarzane lokalnie w przeglądarce i nigdzie nie są wysyłane.</div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tabAnalyze" aria-selected="true" aria-controls="viewAnalyze">Analiza</button>
+    <button role="tab" id="tabHistory" aria-selected="false" aria-controls="viewHistory">Historia i porównanie <span id="histCount" class="muted"></span></button>
+  </nav>
+
+  <main id="viewAnalyze" role="tabpanel" aria-labelledby="tabAnalyze" style="display:grid;gap:18px">
+    <section class="drop" id="drop" aria-label="Dodaj pliki">
+      <div class="lead">
+        <strong>Przeciągnij tu pliki albo wybierz je z dysku</strong>
+        <span class="muted small"><span class="mono">sunshine-session-*.json</span> z hosta · <span class="mono">StreamLight-*.log</span> / <span class="mono">Moonlight-*.log</span> z klienta. Można wiele naraz.</span>
+      </div>
+      <div class="controls">
+        <label class="btn primary" for="files" tabindex="0" id="pickBtn">Wybierz pliki</label>
+        <input id="files" type="file" multiple accept=".json,.log,.txt,application/json,text/plain">
+        <button id="clearBtn" type="button">Wyczyść</button>
+      </div>
+    </section>
+    <div id="notice" class="notice" hidden></div>
+
+    <section class="panel" aria-labelledby="sessTitle">
+      <div class="panel-head"><h2 id="sessTitle">Sesje</h2><span class="muted small" id="sessCount"></span></div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Diagnostyka</th><th>Aplikacja</th><th>Start</th><th class="num">Czas</th><th>Tryb</th><th>Klient</th><th class="num">FPS typowe</th><th>Znaleziska</th></tr></thead>
+          <tbody id="sessBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="detail" style="display:grid;gap:18px" aria-live="polite"></section>
+
+    <section class="panel">
+      <details>
+        <summary>Jak StreamScope to liczy</summary>
+        <ul>
+          <li><b>Parowanie plików:</b> log klienta ma w nazwie czas uniksowy startu, a każda linia czas od tego momentu. StreamScope szuka w pliku Vibepollo zdarzenia <span class="mono">stream_started</span> najbliższego startowi streamu u klienta i pokazuje zmierzone przesunięcie zegarów (zwykle kilka sekund).</li>
+          <li><b>Nazwy plików Vibepollo zawierają czas UTC.</b> Wszystkie godziny w StreamScope są w czasie lokalnym.</li>
+          <li><b>Zakres:</b> benchmark liczy się tylko z próbek hosta w wybranym zakresie. Domyślnie to najdłuższe połączenie w pliku. Zakres ustawisz markerami pada, wpisując czas albo przeciągając po wykresie.</li>
+          <li><b>Markery:</b> odłączenie i podłączenie pada na kliencie (<span class="mono">Gamepad N is gone</span> / ponowne wykrycie), niezależnie od modelu pada, oraz przyszłe <span class="mono">USER_MARKER</span>.</li>
+          <li><b>Percentyle</b> (P50/P5/P1/P95) liczone z interpolacją liniową. <b>FPS z frames_sent</b> to kontrola spójności: przyrost wysłanych klatek podzielony przez czas, osobno dla każdego połączenia.</li>
+          <li><b>Opóźnienie enkodowania 0 ms</b> oznacza brak zakodowanej klatki i jest pomijane w statystykach.</li>
+          <li><b>Statystyki klienta</b> pochodzą z bloku „Global video stats” na końcu streamu, więc dotyczą całego streamu, nie wybranego zakresu. Końcowy <i>Bitrate / Peak (10s)</i> to stan z ostatnich sekund, nie średnia. <i>Smoothness (2m)</i> to miara równości klatek przy VRR, nie liczba FPS.</li>
+          <li><b>Diagnostyka</b> ocenia cały plik hosta (reguły silnika z analizatora sesji): brak klatek do wysłania, przeciążenie GPU/enkodera, utrata pakietów, nieregularne przerwy. Pole <span class="mono">verdict</span> z Vibepollo jest tylko informacyjne.</li>
+          <li>Przy statycznym obrazie Vibepollo schodzi do ok. 16 FPS (keepalive), to nie awaria.</li>
+        </ul>
+      </details>
+    </section>
+  </main>
+
+  <main id="viewHistory" role="tabpanel" aria-labelledby="tabHistory" hidden style="display:grid;gap:18px">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Zapisane sesje</h2>
+        <div class="actions">
+          <button id="compareBtn" class="primary" type="button" disabled>Porównaj zaznaczone</button>
+          <button id="exportBtn" type="button">Eksportuj kopię</button>
+          <label class="btn" for="importFile" tabindex="0" id="importBtn">Importuj kopię</label>
+          <input id="importFile" type="file" accept=".json,application/json">
+        </div>
+      </div>
+      <p class="caveat">Historia jest zapisana tylko w tej przeglądarce na tym urządzeniu. Żeby przenieść ją na inne urządzenie (np. z PC na iPhone'a), wyeksportuj kopię i zaimportuj ją tam.</p>
+      <div id="histNotice" class="notice" hidden></div>
+      <div class="tablewrap"><table>
+        <thead><tr><th></th><th>Data</th><th>Aplikacja</th><th>Klient</th><th>Tryb</th><th>Zakres</th><th class="num">Śr. FPS</th><th class="num">P5</th><th class="num">Enc. P95</th><th class="num">Bitrate</th><th></th></tr></thead>
+        <tbody id="histBody"></tbody>
+      </table></div>
+    </section>
+    <section class="panel" id="comparePanel" hidden></section>
+  </main>
+</div>
+
+<script src="js/core.js"></script>
+<script src="js/parsers/vibepollo.js"></script>
+<script src="js/parsers/clientlog.js"></script>
+<script src="js/engine/diagnostics.js"></script>
+<script src="js/engine/session.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/chart.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

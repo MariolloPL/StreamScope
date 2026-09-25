@@ -1,0 +1,6 @@
+﻿# Logi użytkownika nigdy nie trafiają do repo (local-first, repo publiczne)
+claude/logs/
+*.log
+sunshine-session-*.json
+PresentMon-*.csv
+

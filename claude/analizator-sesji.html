@@ -1,0 +1,625 @@
+<title>Analizator sesji Vibepollo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#F2F4F6; --surface:#FFFFFF; --surface-2:#E9EDF1; --ink:#16202A; --muted:#5A6875; --line:#D6DDE4;
+  --accent:#0B7A83; --accent-ink:#FFFFFF; --accent-soft:#D8EEF0;
+  --s-cpu:#7B61B3; --s-gpu:#2F77C0; --s-enc:#C2691F;
+  --ok:#2F8A55; --warn:#A87408; --crit:#C23B2B;
+  --ok-bg:#E1F2E8; --warn-bg:#FBF0D6; --crit-bg:#FBE3DF; --info-bg:#E4EBF2;
+  --shade-crit:rgba(194,59,43,.14); --shade-warn:rgba(168,116,8,.16); --shade-info:rgba(90,104,117,.13); --shade-trim:rgba(90,104,117,.08);
+  --display:"Barlow Semi Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#0E141A; --surface:#151D25; --surface-2:#1C2630; --ink:#E4EAF0; --muted:#93A1AE; --line:#2A3642;
+    --accent:#3CB9C3; --accent-ink:#06282B; --accent-soft:#143A3F;
+    --s-cpu:#A58BE0; --s-gpu:#5FA3E8; --s-enc:#E59A55;
+    --ok:#4CC27F; --warn:#E0B040; --crit:#EE6B5A;
+    --ok-bg:#12301F; --warn-bg:#342A0E; --crit-bg:#3A1A16; --info-bg:#1C2630;
+    --shade-crit:rgba(238,107,90,.2); --shade-warn:rgba(224,176,64,.18); --shade-info:rgba(147,161,174,.14); --shade-trim:rgba(147,161,174,.07);
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0E141A; --surface:#151D25; --surface-2:#1C2630; --ink:#E4EAF0; --muted:#93A1AE; --line:#2A3642;
+  --accent:#3CB9C3; --accent-ink:#06282B; --accent-soft:#143A3F;
+  --s-cpu:#A58BE0; --s-gpu:#5FA3E8; --s-enc:#E59A55;
+  --ok:#4CC27F; --warn:#E0B040; --crit:#EE6B5A;
+  --ok-bg:#12301F; --warn-bg:#342A0E; --crit-bg:#3A1A16; --info-bg:#1C2630;
+  --shade-crit:rgba(238,107,90,.2); --shade-warn:rgba(224,176,64,.18); --shade-info:rgba(147,161,174,.14); --shade-trim:rgba(147,161,174,.07);
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 var(--body);}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:16px;padding-block:20px 48px;display:grid;gap:18px}
+h1,h2,h3{font-family:var(--display);font-weight:600;letter-spacing:.01em;text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:28px}
+h2{font-size:21px}
+h3{font-size:17px}
+.num,td.num,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.eyebrow{font-family:var(--display);text-transform:uppercase;letter-spacing:.09em;font-size:12px;color:var(--muted);font-weight:600}
+
+header.top{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px}
+header.top p{margin:4px 0 0;max-width:62ch;color:var(--muted)}
+
+.drop{border:1.5px dashed var(--line);border-radius:10px;background:var(--surface);padding:16px;display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center;justify-content:space-between;transition:border-color .15s,background .15s}
+.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop .lead{display:flex;flex-direction:column;gap:2px;min-width:0}
+.drop .lead strong{font-weight:600}
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.field{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.field input{width:64px;font:inherit;font-family:var(--mono);color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:5px 7px}
+button,.btn{font:500 14px/1 var(--body);border-radius:7px;padding:9px 14px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink);cursor:pointer}
+button.primary,.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+button:hover,.btn:hover{filter:brightness(1.05)}
+button:focus-visible,.btn:focus-visible,input:focus-visible,tr:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input[type=file]{display:none}
+
+.notice{font-size:13px;padding:9px 12px;border-radius:8px;background:var(--info-bg);color:var(--ink)}
+.notice.err{background:var(--crit-bg)}
+
+.pill{display:inline-flex;align-items:center;gap:6px;font:600 12px/1 var(--display);letter-spacing:.06em;text-transform:uppercase;padding:5px 9px;border-radius:999px;white-space:nowrap}
+.pill::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.pill.ok{color:var(--ok);background:var(--ok-bg)}
+.pill.warn{color:var(--warn);background:var(--warn-bg)}
+.pill.crit{color:var(--crit);background:var(--crit-bg)}
+.pill.raw{color:var(--muted);background:var(--surface-2)}
+
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px;display:grid;gap:12px;min-width:0}
+.tablewrap{overflow-x:auto;margin-inline:-4px}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th{font:600 12px/1.2 var(--display);letter-spacing:.07em;text-transform:uppercase;color:var(--muted);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:8px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap}
+td.num,th.num{text-align:right}
+tbody tr.sess{cursor:pointer}
+tbody tr.sess:hover{background:var(--surface-2)}
+tbody tr.sess.sel{background:var(--accent-soft)}
+tr.gaprow td{font-size:12.5px;color:var(--muted);padding-block:4px;border-bottom:1px dashed var(--line)}
+tr.gaprow.flag td{color:var(--warn)}
+.app{font-weight:600}
+
+.detail-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:start}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font:12.5px/1 var(--mono);padding:5px 8px;border-radius:6px;background:var(--surface-2);color:var(--muted)}
+.verdicts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:13px}
+.vnote{font-size:13px;color:var(--muted)}
+
+.findings{display:grid;gap:8px}
+.finding{display:grid;grid-template-columns:4px 1fr;gap:12px;background:var(--surface-2);border-radius:8px;padding:10px 12px 10px 0;overflow:hidden}
+.finding .bar{border-radius:0 3px 3px 0}
+.finding.crit .bar{background:var(--crit)} .finding.warn .bar{background:var(--warn)} .finding.info .bar{background:var(--muted)} .finding.ok .bar{background:var(--ok)}
+.finding h3{font-size:16px;margin-bottom:2px}
+.finding p{margin:0;font-size:14px;max-width:80ch}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));border-top:1px solid var(--line);border-left:1px solid var(--line);border-radius:8px;overflow:hidden}
+.stat{background:var(--surface);padding:10px 12px;display:grid;gap:2px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.stat .k{font-size:12px;color:var(--muted)}
+.stat .v{font:500 17px/1.2 var(--mono);font-variant-numeric:tabular-nums}
+.stat .v small{font-size:12px;color:var(--muted);font-weight:400}
+
+.chart{position:relative;display:grid;gap:4px}
+.chart svg{display:block;width:100%;height:auto;overflow:visible}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:var(--muted)}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;vertical-align:middle;margin-right:5px}
+.legend i.box{height:10px;width:12px;border-radius:2px}
+.tip{position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:12.5px/1.45 var(--mono);box-shadow:0 6px 18px rgba(0,0,0,.14);min-width:170px;z-index:2}
+.tip b{font-family:var(--body);font-weight:600}
+.row2{display:grid;grid-template-columns:1fr;gap:16px}
+details.help summary{cursor:pointer;font-family:var(--display);font-weight:600;font-size:17px}
+details.help ul{margin:8px 0 0;padding-left:20px;max-width:80ch;display:grid;gap:6px;font-size:14px}
+.copyrow{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+textarea.copyfallback{width:100%;min-height:140px;font:12.5px/1.4 var(--mono);background:var(--surface-2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px}
+@media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <div class="eyebrow">miniPC · Vibepollo → StreamLight / Moonlight</div>
+      <h1>Analizator sesji Vibepollo</h1>
+      <p>Wrzuć pliki <span class="mono">sunshine-session-*.json</span>. Strona liczy wszystko lokalnie w przeglądarce, pliki nigdzie nie są wysyłane.</p>
+    </div>
+  </header>
+
+  <section class="drop" id="drop" aria-label="Dodaj pliki sesji">
+    <div class="lead">
+      <strong>Przeciągnij tu pliki sesji albo wybierz je z dysku</strong>
+      <span class="muted" style="font-size:13px">Kilka plików naraz: dostaniesz też przerwy między sesjami.</span>
+    </div>
+    <div class="controls">
+      <label class="field" for="trimStart">Pomiń początek <input id="trimStart" type="number" min="0" step="10" value="60"> s</label>
+      <label class="field" for="trimEnd">Pomiń koniec <input id="trimEnd" type="number" min="0" step="5" value="20"> s</label>
+      <label class="btn primary" for="files" tabindex="0" id="pickBtn">Wybierz pliki</label>
+      <input id="files" type="file" accept=".json,application/json" multiple>
+      <button id="clearBtn" type="button">Wyczyść</button>
+    </div>
+  </section>
+
+  <div id="notice" class="notice" hidden></div>
+
+  <section class="panel" aria-labelledby="ovTitle">
+    <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;align-items:baseline">
+      <h2 id="ovTitle">Przegląd sesji</h2>
+      <span class="muted" id="ovCount" style="font-size:13px"></span>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th>Ocena</th><th>Aplikacja</th><th>Klient</th><th>Start</th><th class="num">Czas</th><th class="num">FPS typowe</th><th class="num">Enkoder p99</th><th>Vibepollo</th><th>Znaleziska</th>
+        </tr></thead>
+        <tbody id="ovBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel" id="detail" aria-live="polite"></section>
+
+  <section class="panel">
+    <details class="help">
+      <summary>Jak analizator to czyta</summary>
+      <ul>
+        <li><b>Pole „verdict” z Vibepollo jest tylko informacyjne.</b> Myli się w obie strony, więc ocena opiera się na próbkach.</li>
+        <li><b>Okno analizy</b> pomija początek i koniec pliku (ustawienia wyżej, maks. 20% / 10% długości) oraz 3 próbki po każdym połączeniu. Wyjście do menu i rozruch nie fałszują wyniku.</li>
+        <li><b>Brak klatek do wysłania:</b> FPS poniżej połowy typowego przy CPU &lt;60%, GPU &lt;30% i niskim obciążeniu enkodera. Problem leży przed enkoderem (przechwytywanie obrazu, coś w tle na hoście). Dłuższe niż 6 s poza pierwszymi minutami = problem. Na statycznym pulpicie lub w menu to bywa normalne.</li>
+        <li><b>Przeciążenie GPU/enkodera:</b> FPS niższy o ponad 40% przy GPU ≥88% albo opóźnieniu enkodowania ≥20 ms. Typowe dla 4K; pomaga niższa rozdzielczość lub bitrate.</li>
+        <li><b>Spadki przy obciążonym GPU</b> (bez przeciążenia enkodera) to zwykle ekran ładowania albo przycięcie gry, nie streamu.</li>
+        <li><b>Utrata pakietów</b> (<span class="mono">client_reported_losses</span>, <span class="mono">video_dropped</span>) to jedyny twardy dowód problemu z siecią.</li>
+        <li><b>Przerwy:</b> zmiana ustawień w kliencie daje reconnect ok. 2–2,5 s. Dłuższe, nierówne przerwy w pliku i między plikami mogą oznaczać zawieszenie poza aktywnym streamem.</li>
+        <li><b>Godziny</b> są pokazane w czasie lokalnym. Nazwy plików Vibepollo zawierają czas UTC, więc w Polsce różnią się o 1–2 h od tego, co widzisz tutaj i w Podglądzie zdarzeń.</li>
+        <li><b>Jitter klatek</b> liczy się narastająco od startu, więc w sesjach krótszych niż ok. 3 min jest niewiarygodny. <b>Temperatura CPU hosta</b> (stałe 16,9°C) jest pomijana.</li>
+      </ul>
+    </details>
+  </section>
+</div>
+
+<script>
+// Session analysis engine for Vibepollo/Sunshine session JSON files.
+// Encodes the diagnostic methodology developed for the miniPC streaming project.
+const Engine = (() => {
+  const SAMPLE_MIN_FPS = 5;          // below this a sample is treated as "stream not flowing yet"
+  const SETTINGS_GAP_MAX = 3.5;      // reconnect gap (s) typical of a deliberate settings change
+  const SEG_WARMUP_SAMPLES = 3;      // samples skipped after each (re)connect
+
+  const median = a => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+  const pct = (a, p) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(s.length * p))]; };
+  const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+  const max = a => a.length ? Math.max(...a) : null;
+
+  function parse(name, text) {
+    const d = JSON.parse(text);
+    if (!d || !Array.isArray(d.samples)) throw new Error('Brak tablicy "samples" — to nie wygląda na plik sesji Vibepollo.');
+    const t0 = d.start_time_unix ?? (d.samples[0] && d.samples[0].timestamp_unix);
+    const tEnd = d.end_time_unix ?? (d.samples.length ? d.samples[d.samples.length - 1].timestamp_unix : t0);
+    return { name, raw: d, t0, tEnd };
+  }
+
+  // Per-sample deltas for counters that are cumulative within a session_uuid.
+  function counterDeltas(samples, key) {
+    const out = []; let prevU = null, prev = 0;
+    for (const s of samples) {
+      const v = +s[key] || 0;
+      if (s.session_uuid !== prevU) { out.push(0); prevU = s.session_uuid; prev = v; continue; }
+      out.push(v >= prev ? v - prev : v); prev = v;
+    }
+    return out;
+  }
+  function counterTotal(samples, key) {
+    // Sum over segments of (last - first) plus resets; the first value of a segment is its baseline.
+    let total = 0, prevU = null, prev = 0;
+    for (const s of samples) {
+      const v = +s[key] || 0;
+      if (s.session_uuid !== prevU) { prevU = s.session_uuid; prev = v; total += (key === 'idr_requests' || key === 'ref_invalidations') ? 0 : v; continue; }
+      total += v >= prev ? v - prev : v; prev = v;
+    }
+    return total;
+  }
+
+  function segments(f) {
+    const segs = []; let cur = null;
+    for (const s of f.raw.samples) {
+      if (!cur || cur.uuid !== s.session_uuid) { cur = { uuid: s.session_uuid, t0: s.timestamp_unix, t1: s.timestamp_unix, n: 0 }; segs.push(cur); }
+      cur.t1 = s.timestamp_unix; cur.n++;
+    }
+    // Prefer precise boundaries from events when present.
+    const ev = f.raw.events || [];
+    for (const g of segs) {
+      const st = ev.find(e => e.session_uuid === g.uuid && e.event_type === 'stream_started');
+      const en = ev.find(e => e.session_uuid === g.uuid && e.event_type === 'stream_ended');
+      if (st) g.t0 = st.timestamp_unix; if (en) g.t1 = en.timestamp_unix;
+    }
+    const gaps = [];
+    for (let i = 1; i < segs.length; i++) {
+      const gap = segs[i].t0 - segs[i - 1].t1;
+      gaps.push({ at: segs[i - 1].t1 - f.t0, gap, kind: gap <= SETTINGS_GAP_MAX ? 'settings' : 'irregular' });
+    }
+    return { segs, gaps };
+  }
+
+  function groupEpisodes(flags, samples, t0, dt) {
+    const eps = []; let cur = null;
+    flags.forEach((on, i) => {
+      if (on) { if (cur && i - cur.end <= 2) cur.end = i; else { cur = { start: i, end: i }; eps.push(cur); } }
+    });
+    return eps.map(e => ({ ...e, t: samples[e.start].timestamp_unix - t0, dur: (e.end - e.start + 1) * dt }));
+  }
+
+  function analyze(f, opts) {
+    const d = f.raw, S = d.samples, n = S.length;
+    const dur = d.duration_seconds ?? (f.tEnd - f.t0);
+    const ts = S.map(s => s.timestamp_unix);
+    const dts = ts.slice(1).map((t, i) => t - ts[i]);
+    const dt = Math.round((median(dts) || 2) * 100) / 100;
+    const target = d.target_fps || 120;
+
+    const trimStart = Math.min(opts.trimStart, dur * 0.2);
+    const trimEnd = Math.min(opts.trimEnd, dur * 0.1);
+    const { segs, gaps } = segments(f);
+
+    // Analysis window: trim head/tail of the file, skip warm-up after each reconnect, drop non-flowing samples.
+    const segStartIdx = new Set(); { let pu = null; S.forEach((s, i) => { if (s.session_uuid !== pu) { for (let k = 0; k < SEG_WARMUP_SAMPLES; k++) segStartIdx.add(i + k); pu = s.session_uuid; } }); }
+    const inWin = S.map((s, i) => {
+      const rel = s.timestamp_unix - f.t0;
+      return rel >= trimStart && rel <= dur - trimEnd && !segStartIdx.has(i) && s.actual_fps > SAMPLE_MIN_FPS;
+    });
+    const W = S.filter((_, i) => inWin[i]);
+    const col = k => W.map(s => +s[k] || 0);
+
+    const fpsW = col('actual_fps');
+    const baseline = median(fpsW) || target;
+    const encMed = median(col('host_gpu_encoder_percent')) || 0;
+
+    // Signatures (evaluated only inside the window).
+    const lowFps = s => s.actual_fps < 0.5 * baseline;
+    const sigGpuOverload = S.map((s, i) => inWin[i] && s.actual_fps < 0.6 * baseline && (s.host_gpu_percent >= 88 || s.encode_latency_ms >= 20));
+    const sigStarve = S.map((s, i) => inWin[i] && !sigGpuOverload[i] && lowFps(s) && s.host_gpu_percent < 30 && s.host_cpu_percent < 60 && s.host_gpu_encoder_percent < Math.max(20, encMed * 0.6));
+    const sigBusyStall = S.map((s, i) => inWin[i] && !sigGpuOverload[i] && !sigStarve[i] && lowFps(s) && s.host_gpu_percent >= 30);
+
+    const idrD = counterDeltas(S, 'idr_requests');
+    const refD = counterDeltas(S, 'ref_invalidations');
+    const lossD = counterDeltas(S, 'client_reported_losses');
+    const vdropD = counterDeltas(S, 'video_dropped');
+
+    const annotate = eps => eps.map(e => {
+      let idr = 0, ref = 0; for (let i = e.start; i <= Math.min(n - 1, e.end + 3); i++) { idr += idrD[i]; ref += refD[i]; }
+      const sl = S.slice(e.start, e.end + 1);
+      return { ...e, idr, ref, fpsMin: Math.min(...sl.map(s => s.actual_fps)), cpu: mean(sl.map(s => s.host_cpu_percent)), gpu: mean(sl.map(s => s.host_gpu_percent)), enc: mean(sl.map(s => s.encode_latency_ms)) };
+    });
+    const earlyLimit = Math.min(300, dur * 0.25);
+    const epsStarve = annotate(groupEpisodes(sigStarve, S, f.t0, dt)).map(e => ({ ...e, early: e.t < earlyLimit }));
+    const epsGpu = annotate(groupEpisodes(sigGpuOverload, S, f.t0, dt));
+    const epsBusy = annotate(groupEpisodes(sigBusyStall, S, f.t0, dt));
+
+    const losses = counterTotal(S, 'client_reported_losses');
+    const vdrop = counterTotal(S, 'video_dropped');
+    const adrop = counterTotal(S, 'audio_dropped');
+    const idrTotal = counterTotal(S, 'idr_requests');
+    const refTotal = counterTotal(S, 'ref_invalidations');
+    const lossIdx = S.map((_, i) => lossD[i] + vdropD[i] > 0);
+
+    const encLat = col('encode_latency_ms').filter(v => v > 0);
+    const cpu = col('host_cpu_percent'), gpu = col('host_gpu_percent'), genc = col('host_gpu_encoder_percent');
+    const cpuHot = cpu.length ? cpu.filter(v => v >= 95).length / cpu.length : 0;
+    const winSec = W.length * dt;
+    const jitterReliable = winSec >= 180;
+    const bitrate = col('actual_bitrate_kbps').filter(v => v > 0);
+
+    const sum = eps => eps.reduce((a, e) => a + e.dur, 0);
+    const starveSec = sum(epsStarve), starveLateSec = sum(epsStarve.filter(e => !e.early)), gpuSec = sum(epsGpu), busySec = sum(epsBusy);
+    const irregular = gaps.filter(g => g.kind === 'irregular');
+
+    const findings = [];
+    if (losses + vdrop > 0) findings.push({ sev: 'crit', title: 'Utrata danych w sieci', text: `client_reported_losses: ${losses}, video_dropped: ${vdrop}. To jedyny twardy dowód problemu z łączem; sprawdź kabel, Wi-Fi i obciążenie sieci w tym czasie.` });
+    if (epsStarve.length) {
+      const long = epsStarve.filter(e => e.dur >= 6);
+      const desync = epsStarve.some(e => e.idr > 0 || e.ref > 20);
+      const earlyN = epsStarve.filter(e => e.early).length;
+      findings.push({ sev: starveLateSec >= 6 ? 'crit' : 'warn', title: 'Brak klatek do wysłania', text: `${epsStarve.length} epizod(ów), łącznie ~${Math.round(starveSec)} s${long.length ? `, najdłuższy ${Math.round(Math.max(...long.map(e => e.dur)))} s` : ''}.${earlyN ? ` ${earlyN === epsStarve.length ? 'Wszystkie' : earlyN} na początku sesji, gdy zwykle trwa jeszcze nawigacja po menu — te traktuj ostrożnie.` : ''} FPS spada przy niskim CPU/GPU hosta i niskim obciążeniu enkodera — coś przed enkoderem przestaje dostarczać klatki (przechwytywanie obrazu, proces w tle).${desync ? ' W trakcie rosną idr_requests/ref_invalidations, czyli strumień faktycznie się rozsynchronizował.' : ''} Uwaga: w menu i na statycznym pulpicie ta sama sygnatura bywa normalna, bo host nie ma czego wysyłać.` });
+    }
+    if (epsGpu.length) findings.push({ sev: gpuSec >= 6 ? 'crit' : 'warn', title: 'Przeciążenie GPU / enkodera', text: `${epsGpu.length} epizod(ów), łącznie ~${Math.round(gpuSec)} s. FPS spada o ponad 40% przy GPU ≥88% albo opóźnieniu enkodowania ≥20 ms. Pomaga niższa rozdzielczość lub bitrate.` });
+    if (epsBusy.length) findings.push({ sev: 'info', title: 'Spadki FPS przy obciążonym GPU', text: `${epsBusy.length} epizod(ów), łącznie ~${Math.round(busySec)} s. Najczęściej ekran ładowania albo przycięcie samej gry, nie streamu. Sprawdź, co działo się wtedy w grze.` });
+    if (irregular.length) findings.push({ sev: 'warn', title: 'Nieregularne przerwy w połączeniu', text: `${irregular.map(g => `${fmtT(g.at)} (${g.gap.toFixed(1)} s)`).join(', ')}. Zmiana ustawień daje równe przerwy ok. 2–2,5 s; dłuższe lub nierówne sugerują zerwanie albo zawieszenie.` });
+    const settingsGaps = gaps.filter(g => g.kind === 'settings');
+    if (settingsGaps.length) findings.push({ sev: 'info', title: 'Zmiany ustawień w trakcie', text: `${settingsGaps.length} krótki(ch) reconnect(ów) ~2 s — typowy ślad zmiany ustawień w kliencie, nie awarii.` });
+    if (cpuHot > 0.05) findings.push({ sev: 'warn', title: 'CPU hosta na granicy', text: `CPU ≥95% w ${(cpuHot * 100).toFixed(1)}% próbek okna analizy.` });
+    const encP99 = pct(encLat, 0.99);
+    if (encP99 != null && encP99 > 20) findings.push({ sev: 'warn', title: 'Skoki opóźnienia enkodowania', text: `p99 = ${encP99.toFixed(1)} ms (zdrowe sesje: kilka ms, max ok. 10–15 ms).` });
+
+    let status = 'ok';
+    if (findings.some(x => x.sev === 'crit')) status = 'crit'; else if (findings.some(x => x.sev === 'warn')) status = 'warn';
+    const verdictNote = (d.verdict === 'degraded' && status === 'ok') ? 'Vibepollo oznaczył sesję jako degraded, ale próbki tego nie potwierdzają.' :
+      (d.verdict === 'healthy' && status !== 'ok') ? 'Vibepollo oznaczył sesję jako healthy, mimo to próbki pokazują problemy.' : null;
+
+    return {
+      file: f, name: f.name, app: d.app_name || '?', client: d.client_name || d.device_name || '?', server: (d.server_version || '').split(' ')[0],
+      codec: d.codec, res: d.width && d.height ? `${d.width}×${d.height}` : '?', target, reqBitrate: d.requested_bitrate_kbps,
+      start: f.t0, end: f.tEnd, dur, dt, n, trimStart, trimEnd, winSec, inWin, verdict: d.verdict, verdictNote, status, findings,
+      segs, gaps, epsStarve, epsGpu, epsBusy, lossIdx,
+      stats: {
+        baseline, fpsP10: pct(fpsW, 0.1), fpsLow: fpsW.length ? fpsW.filter(v => v < 0.5 * baseline).length / fpsW.length : 0,
+        encMed: median(encLat), encP99, encMax: max(encLat), cpuMean: mean(cpu), cpuHot, gpuMean: mean(gpu), gpuMax: max(gpu), gencMean: mean(genc),
+        bitrateMed: median(bitrate), jitterMed: median(col('frame_interval_jitter_ms')), jitterReliable,
+        gpuTempMax: max(col('host_gpu_temp_c')), losses, vdrop, adrop, idrTotal, refTotal
+      }
+    };
+  }
+
+  function fmtT(sec) { sec = Math.max(0, Math.round(sec)); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0'); }
+
+  function crossGaps(results) {
+    const r = [...results].sort((a, b) => a.start - b.start); const out = [];
+    for (let i = 1; i < r.length; i++) {
+      const gap = r[i].start - r[i - 1].end;
+      if (gap >= 0 && gap < 1800) out.push({ from: r[i - 1], to: r[i], gap });
+    }
+    return out;
+  }
+
+  return { parse, analyze, crossGaps, fmtT, median };
+})();
+if (typeof module !== 'undefined') module.exports = Engine;
+
+</script>
+<script>
+const SAMPLE = [{"name":"sunshine-session-ARC_Raiders-2026-09-10T19-36-28.json","text":"{\"app_name\":\"ARC Raiders\",\"audio_channels\":6,\"client_name\":\"miniPC\",\"codec\":\"HEVC\",\"device_name\":\"miniPC\",\"duration_seconds\":91.7,\"encoder_bitrate_kbps\":57964,\"end_time_unix\":1789069080.6391985,\"events\":[{\"event_type\":\"stream_started\",\"payload\":\"\",\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"timestamp_unix\":1789068988.981067},{\"event_type\":\"stream_ended\",\"payload\":\"\",\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"timestamp_unix\":1789069080.6390214}],\"events_truncated\":false,\"hdr\":false,\"height\":1080,\"host_cpu_model\":\"AMD Ryzen 5 7600 6-Core Processor\",\"host_gpu_model\":\"NVIDIA GeForce RTX 4070 SUPER\",\"protocol\":\"rtsp\",\"requested_bitrate_kbps\":75000,\"samples_truncated\":false,\"server_version\":\"1.18.4-stable.3 -stable.3\",\"start_time_unix\":1789068988.9811146,\"stream_gpu_model\":\"\",\"target_fps\":120,\"total_events\":2,\"total_samples\":44,\"uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"verdict\":\"healthy\",\"width\":1920,\"yuv444\":false,\"samples\":[{\"timestamp_unix\":1789068992.548,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":0,\"actual_bitrate_kbps\":0,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":0,\"host_cpu_percent\":81.6,\"host_gpu_percent\":0.9,\"host_gpu_encoder_percent\":0,\"host_net_tx_bps\":84503.671,\"host_gpu_temp_c\":56.2,\"idr_requests\":2,\"ref_invalidations\":0,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789068994.549,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":59.5,\"actual_bitrate_kbps\":10925.8,\"encode_latency_ms\":3.2,\"frame_interval_jitter_ms\":0,\"host_cpu_percent\":51.1,\"host_gpu_percent\":1.4,\"host_gpu_encoder_percent\":5.2,\"host_net_tx_bps\":11592136.411,\"host_gpu_temp_c\":56.2,\"idr_requests\":2,\"ref_invalidations\":0,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789068996.549,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":47,\"actual_bitrate_kbps\":4375.8,\"encode_latency_ms\":3.4,\"frame_interval_jitter_ms\":3.16,\"host_cpu_percent\":16,\"host_gpu_percent\":1.8,\"host_gpu_encoder_percent\":13.5,\"host_net_tx_bps\":5205097.762,\"host_gpu_temp_c\":56.2,\"idr_requests\":2,\"ref_invalidations\":2,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789068998.549,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":37,\"actual_bitrate_kbps\":10605.8,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":5.12,\"host_cpu_percent\":7.4,\"host_gpu_percent\":1.7,\"host_gpu_encoder_percent\":11.5,\"host_net_tx_bps\":3124103.846,\"host_gpu_temp_c\":56.2,\"idr_requests\":2,\"ref_invalidations\":47,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069000.55,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":36,\"actual_bitrate_kbps\":3331.7,\"encode_latency_ms\":3.2,\"frame_interval_jitter_ms\":5.17,\"host_cpu_percent\":12,\"host_gpu_percent\":1.5,\"host_gpu_encoder_percent\":9.7,\"host_net_tx_bps\":2776118.704,\"host_gpu_temp_c\":56.2,\"idr_requests\":2,\"ref_invalidations\":47,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069002.55,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":33,\"actual_bitrate_kbps\":12328.1,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":5.48,\"host_cpu_percent\":5.9,\"host_gpu_percent\":1.4,\"host_gpu_encoder_percent\":8.2,\"host_net_tx_bps\":3556185.217,\"host_gpu_temp_c\":56.1,\"idr_requests\":6,\"ref_invalidations\":115,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069004.55,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":33,\"actual_bitrate_kbps\":6334.8,\"encode_latency_ms\":3.2,\"frame_interval_jitter_ms\":5.42,\"host_cpu_percent\":9.6,\"host_gpu_percent\":1.4,\"host_gpu_encoder_percent\":8,\"host_net_tx_bps\":16768679.794,\"host_gpu_temp_c\":56.2,\"idr_requests\":6,\"ref_invalidations\":115,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069006.551,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":32,\"actual_bitrate_kbps\":2902.8,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":5.4,\"host_cpu_percent\":7.4,\"host_gpu_percent\":1.4,\"host_gpu_encoder_percent\":8.2,\"host_net_tx_bps\":3657569.83,\"host_gpu_temp_c\":56.2,\"idr_requests\":6,\"ref_invalidations\":115,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069008.551,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":33,\"actual_bitrate_kbps\":3048.5,\"encode_latency_ms\":3.2,\"frame_interval_jitter_ms\":5.18,\"host_cpu_percent\":9.9,\"host_gpu_percent\":1.4,\"host_gpu_encoder_percent\":8.2,\"host_net_tx_bps\":3237858.022,\"host_gpu_temp_c\":56.2,\"idr_requests\":6,\"ref_invalidations\":115,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069010.552,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":116.5,\"actual_bitrate_kbps\":10340.5,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":7.79,\"host_cpu_percent\":17.1,\"host_gpu_percent\":3.4,\"host_gpu_encoder_percent\":14.1,\"host_net_tx_bps\":6653500.912,\"host_gpu_temp_c\":56.2,\"idr_requests\":6,\"ref_invalidations\":115,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069012.552,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":120,\"actual_bitrate_kbps\":8750.7,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":9.01,\"host_cpu_percent\":45.9,\"host_gpu_percent\":5.1,\"host_gpu_encoder_percent\":30.6,\"host_net_tx_bps\":9876827.403,\"host_gpu_temp_c\":56.7,\"idr_requests\":6,\"ref_invalidations\":115,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069014.552,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":120,\"actual_bitrate_kbps\":8694.2,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":9.66,\"host_cpu_percent\":35.7,\"host_gpu_percent\":4.9,\"host_gpu_encoder_percent\":30.6,\"host_net_tx_bps\":912665.867,\"host_gpu_temp_c\":56.8,\"idr_requests\":6,\"ref_invalidations\":115,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069016.552,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":120,\"actual_bitrate_kbps\":8664.9,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":10,\"host_cpu_percent\":28.2,\"host_gpu_percent\":4.8,\"host_gpu_encoder_percent\":30.6,\"host_net_tx_bps\":28841.972,\"host_gpu_temp_c\":56.8,\"idr_requests\":6,\"ref_invalidations\":115,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069018.553,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":120.5,\"actual_bitrate_kbps\":8757.9,\"encode_latency_ms\":3.3,\"frame_interval_jitter_ms\":10.17,\"host_cpu_percent\":36,\"host_gpu_percent\":4.8,\"host_gpu_encoder_percent\":30.6,\"host_net_tx_bps\":39080.885,\"host_gpu_temp_c\":56.8,\"idr_requests\":6,\"ref_invalidations\":115,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069020.553,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":120.5,\"actual_bitrate_kbps\":17700.8,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":10.24,\"host_cpu_percent\":42.8,\"host_gpu_percent\":4.9,\"host_gpu_encoder_percent\":30.6,\"host_net_tx_bps\":14443.967,\"host_gpu_temp_c\":56.9,\"idr_requests\":18,\"ref_invalidations\":212,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069022.553,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":75,\"actual_bitrate_kbps\":7636.9,\"encode_latency_ms\":3.2,\"frame_interval_jitter_ms\":9.98,\"host_cpu_percent\":34,\"host_gpu_percent\":4,\"host_gpu_encoder_percent\":30.4,\"host_net_tx_bps\":18551546.4,\"host_gpu_temp_c\":56.9,\"idr_requests\":18,\"ref_invalidations\":212,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069024.553,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":32,\"actual_bitrate_kbps\":2770.4,\"encode_latency_ms\":3.3,\"frame_interval_jitter_ms\":10.15,\"host_cpu_percent\":29.7,\"host_gpu_percent\":2.9,\"host_gpu_encoder_percent\":11.6,\"host_net_tx_bps\":4777691.644,\"host_gpu_temp_c\":56.5,\"idr_requests\":18,\"ref_invalidations\":212,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069026.554,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":32,\"actual_bitrate_kbps\":2832.3,\"encode_latency_ms\":3.3,\"frame_interval_jitter_ms\":10.24,\"host_cpu_percent\":19.4,\"host_gpu_percent\":1.4,\"host_gpu_encoder_percent\":8.2,\"host_net_tx_bps\":3113087.047,\"host_gpu_temp_c\":56.5,\"idr_requests\":18,\"ref_invalidations\":212,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069028.554,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":32.5,\"actual_bitrate_kbps\":10366.1,\"encode_latency_ms\":3.2,\"frame_interval_jitter_ms\":10.25,\"host_cpu_percent\":22.2,\"host_gpu_percent\":1.4,\"host_gpu_encoder_percent\":8.1,\"host_net_tx_bps\":3152438.608,\"host_gpu_temp_c\":56.5,\"idr_requests\":18,\"ref_invalidations\":305,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069030.554,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":25.5,\"actual_bitrate_kbps\":9699.7,\"encode_latency_ms\":0,\"frame_interval_jitter_ms\":10.83,\"host_cpu_percent\":22.3,\"host_gpu_percent\":1.4,\"host_gpu_encoder_percent\":7.9,\"host_net_tx_bps\":14721664.207,\"host_gpu_temp_c\":56.5,\"idr_requests\":19,\"ref_invalidations\":331,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069032.554,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":56,\"actual_bitrate_kbps\":7346.1,\"encode_latency_ms\":0,\"frame_interval_jitter_ms\":10.58,\"host_cpu_percent\":24.4,\"host_gpu_percent\":0.4,\"host_gpu_encoder_percent\":4.7,\"host_net_tx_bps\":6569124.832,\"host_gpu_temp_c\":56,\"idr_requests\":19,\"ref_invalidations\":331,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069034.554,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":16,\"actual_bitrate_kbps\":931.8,\"encode_latency_ms\":0,\"frame_interval_jitter_ms\":13.66,\"host_cpu_percent\":34.3,\"host_gpu_percent\":2.6,\"host_gpu_encoder_percent\":14.3,\"host_net_tx_bps\":8065664.418,\"host_gpu_temp_c\":55.7,\"idr_requests\":19,\"ref_invalidations\":331,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069036.555,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":49.5,\"actual_bitrate_kbps\":2308.5,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":13.35,\"host_cpu_percent\":30.4,\"host_gpu_percent\":1,\"host_gpu_encoder_percent\":6.5,\"host_net_tx_bps\":1834878.133,\"host_gpu_temp_c\":55.8,\"idr_requests\":19,\"ref_invalidations\":331,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069038.555,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":63,\"actual_bitrate_kbps\":2520.4,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":13.13,\"host_cpu_percent\":28.6,\"host_gpu_percent\":1.5,\"host_gpu_encoder_percent\":13.4,\"host_net_tx_bps\":4718512.751,\"host_gpu_temp_c\":55.1,\"idr_requests\":19,\"ref_invalidations\":331,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069040.555,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":63.5,\"actual_bitrate_kbps\":2554.1,\"encode_latency_ms\":3.2,\"frame_interval_jitter_ms\":12.92,\"host_cpu_percent\":25.2,\"host_gpu_percent\":1.4,\"host_gpu_encoder_percent\":14.6,\"host_net_tx_bps\":2615708.995,\"host_gpu_temp_c\":54.5,\"idr_requests\":19,\"ref_invalidations\":331,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069042.556,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":74.5,\"actual_bitrate_kbps\":3019.5,\"encode_latency_ms\":2.8,\"frame_interval_jitter_ms\":12.79,\"host_cpu_percent\":30,\"host_gpu_percent\":1.5,\"host_gpu_encoder_percent\":15.6,\"host_net_tx_bps\":188636.57,\"host_gpu_temp_c\":53.9,\"idr_requests\":19,\"ref_invalidations\":331,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069044.556,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":62.5,\"actual_bitrate_kbps\":2549.9,\"encode_latency_ms\":2.9,\"frame_interval_jitter_ms\":12.59,\"host_cpu_percent\":18.6,\"host_gpu_percent\":1.6,\"host_gpu_encoder_percent\":16.2,\"host_net_tx_bps\":70757.989,\"host_gpu_temp_c\":53.3,\"idr_requests\":19,\"ref_invalidations\":331,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069046.556,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":65,\"actual_bitrate_kbps\":2986.2,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":12.41,\"host_cpu_percent\":27.8,\"host_gpu_percent\":1.5,\"host_gpu_encoder_percent\":15.1,\"host_net_tx_bps\":3072205.055,\"host_gpu_temp_c\":52.7,\"idr_requests\":25,\"ref_invalidations\":423,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069048.556,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":63,\"actual_bitrate_kbps\":1979.8,\"encode_latency_ms\":4.4,\"frame_interval_jitter_ms\":12.23,\"host_cpu_percent\":34.6,\"host_gpu_percent\":5.2,\"host_gpu_encoder_percent\":14.6,\"host_net_tx_bps\":5314668.521,\"host_gpu_temp_c\":52.3,\"idr_requests\":25,\"ref_invalidations\":423,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069050.557,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":104.5,\"actual_bitrate_kbps\":2608.3,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":12.21,\"host_cpu_percent\":75.3,\"host_gpu_percent\":27.2,\"host_gpu_encoder_percent\":33.8,\"host_net_tx_bps\":4858926.91,\"host_gpu_temp_c\":53.1,\"idr_requests\":25,\"ref_invalidations\":423,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069052.557,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":115,\"actual_bitrate_kbps\":2869.5,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":12.21,\"host_cpu_percent\":48.8,\"host_gpu_percent\":14.6,\"host_gpu_encoder_percent\":26.8,\"host_net_tx_bps\":5854715.114,\"host_gpu_temp_c\":52.6,\"idr_requests\":25,\"ref_invalidations\":423,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069054.557,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":114.5,\"actual_bitrate_kbps\":5910.4,\"encode_latency_ms\":2.9,\"frame_interval_jitter_ms\":12.2,\"host_cpu_percent\":26.4,\"host_gpu_percent\":14.6,\"host_gpu_encoder_percent\":26.6,\"host_net_tx_bps\":7992337.964,\"host_gpu_temp_c\":52.3,\"idr_requests\":25,\"ref_invalidations\":436,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069056.558,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":115.5,\"actual_bitrate_kbps\":5740.5,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":12.18,\"host_cpu_percent\":22.1,\"host_gpu_percent\":14.5,\"host_gpu_encoder_percent\":26.7,\"host_net_tx_bps\":8878483.319,\"host_gpu_temp_c\":51.9,\"idr_requests\":25,\"ref_invalidations\":446,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069058.558,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":115,\"actual_bitrate_kbps\":5440.9,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":12.15,\"host_cpu_percent\":24.2,\"host_gpu_percent\":14.6,\"host_gpu_encoder_percent\":26.8,\"host_net_tx_bps\":8926383.329,\"host_gpu_temp_c\":51.7,\"idr_requests\":25,\"ref_invalidations\":449,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069060.558,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":115,\"actual_bitrate_kbps\":5935,\"encode_latency_ms\":2.8,\"frame_interval_jitter_ms\":12.11,\"host_cpu_percent\":22.8,\"host_gpu_percent\":14.5,\"host_gpu_encoder_percent\":26.7,\"host_net_tx_bps\":9007114.665,\"host_gpu_temp_c\":51.6,\"idr_requests\":25,\"ref_invalidations\":458,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069062.558,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":115,\"actual_bitrate_kbps\":5728.2,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":12.06,\"host_cpu_percent\":24.4,\"host_gpu_percent\":14.7,\"host_gpu_encoder_percent\":26.9,\"host_net_tx_bps\":8565714.211,\"host_gpu_temp_c\":51.3,\"idr_requests\":25,\"ref_invalidations\":458,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069064.559,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":114.9,\"actual_bitrate_kbps\":5509.1,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":12.01,\"host_cpu_percent\":32.5,\"host_gpu_percent\":14.7,\"host_gpu_encoder_percent\":26.7,\"host_net_tx_bps\":9152922.338,\"host_gpu_temp_c\":50.6,\"idr_requests\":25,\"ref_invalidations\":462,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069066.559,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":115,\"actual_bitrate_kbps\":5786.5,\"encode_latency_ms\":2.8,\"frame_interval_jitter_ms\":11.96,\"host_cpu_percent\":35.5,\"host_gpu_percent\":14.4,\"host_gpu_encoder_percent\":26.8,\"host_net_tx_bps\":8202485.206,\"host_gpu_temp_c\":50.3,\"idr_requests\":25,\"ref_invalidations\":462,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069068.559,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":115,\"actual_bitrate_kbps\":5699.1,\"encode_latency_ms\":2.8,\"frame_interval_jitter_ms\":11.9,\"host_cpu_percent\":27.1,\"host_gpu_percent\":14.6,\"host_gpu_encoder_percent\":26.7,\"host_net_tx_bps\":36309.948,\"host_gpu_temp_c\":50,\"idr_requests\":25,\"ref_invalidations\":463,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069070.559,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":115,\"actual_bitrate_kbps\":5811,\"encode_latency_ms\":2.9,\"frame_interval_jitter_ms\":11.84,\"host_cpu_percent\":25,\"host_gpu_percent\":14.5,\"host_gpu_encoder_percent\":26.8,\"host_net_tx_bps\":40650.763,\"host_gpu_temp_c\":49.8,\"idr_requests\":25,\"ref_invalidations\":473,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069072.56,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":115,\"actual_bitrate_kbps\":5419.2,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":11.78,\"host_cpu_percent\":26.9,\"host_gpu_percent\":14.6,\"host_gpu_encoder_percent\":26.8,\"host_net_tx_bps\":47072.973,\"host_gpu_temp_c\":49.7,\"idr_requests\":25,\"ref_invalidations\":473,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069074.56,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":115,\"actual_bitrate_kbps\":5903,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":11.72,\"host_cpu_percent\":25,\"host_gpu_percent\":14.6,\"host_gpu_encoder_percent\":26.6,\"host_net_tx_bps\":44402.119,\"host_gpu_temp_c\":49.5,\"idr_requests\":25,\"ref_invalidations\":473,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069076.56,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":115,\"actual_bitrate_kbps\":5722.8,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":11.66,\"host_cpu_percent\":33.7,\"host_gpu_percent\":14.6,\"host_gpu_encoder_percent\":26.8,\"host_net_tx_bps\":24109.341,\"host_gpu_temp_c\":49.3,\"idr_requests\":25,\"ref_invalidations\":473,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069078.56,\"session_uuid\":\"EB6BEE82-FDF9-C20C-D197-FFFEDCBBBF7A\",\"actual_fps\":115,\"actual_bitrate_kbps\":5570.2,\"encode_latency_ms\":2.8,\"frame_interval_jitter_ms\":11.59,\"host_cpu_percent\":27.3,\"host_gpu_percent\":14.6,\"host_gpu_encoder_percent\":26.8,\"host_net_tx_bps\":21430.327,\"host_gpu_temp_c\":49,\"idr_requests\":25,\"ref_invalidations\":473,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0}]}"},{"name":"sunshine-session-Desktop-2026-09-10T19-38-18.json","text":"{\"app_name\":\"Desktop\",\"audio_channels\":6,\"client_name\":\"miniPC\",\"codec\":\"HEVC\",\"device_name\":\"miniPC\",\"duration_seconds\":40.5,\"encoder_bitrate_kbps\":57964,\"end_time_unix\":1789069177.991424,\"events\":[{\"event_type\":\"stream_started\",\"payload\":\"\",\"session_uuid\":\"1D21A6A5-A137-8E05-8B0E-72FC1325BBBE\",\"timestamp_unix\":1789069098.003702},{\"event_type\":\"stream_ended\",\"payload\":\"\",\"session_uuid\":\"1D21A6A5-A137-8E05-8B0E-72FC1325BBBE\",\"timestamp_unix\":1789069117.3128574},{\"event_type\":\"stream_started\",\"payload\":\"\",\"session_uuid\":\"685DA4A9-0314-B703-2714-37F2B70E83D7\",\"timestamp_unix\":1789069156.8346415},{\"event_type\":\"stream_ended\",\"payload\":\"\",\"session_uuid\":\"685DA4A9-0314-B703-2714-37F2B70E83D7\",\"timestamp_unix\":1789069177.991157}],\"events_truncated\":false,\"hdr\":false,\"height\":1080,\"host_cpu_model\":\"AMD Ryzen 5 7600 6-Core Processor\",\"host_gpu_model\":\"NVIDIA GeForce RTX 4070 SUPER\",\"protocol\":\"rtsp\",\"requested_bitrate_kbps\":75000,\"samples_truncated\":false,\"server_version\":\"1.18.4-stable.3 -stable.3\",\"start_time_unix\":1789069098.0037487,\"stream_gpu_model\":\"NVIDIA GeForce RTX 4070 SUPER\",\"target_fps\":120,\"total_events\":4,\"total_samples\":18,\"uuid\":\"group:1D21A6A5-A137-8E05-8B0E-72FC1325BBBE,685DA4A9-0314-B703-2714-37F2B70E83D7\",\"verdict\":\"healthy\",\"width\":1920,\"yuv444\":false,\"samples\":[{\"timestamp_unix\":1789069100.564,\"session_uuid\":\"1D21A6A5-A137-8E05-8B0E-72FC1325BBBE\",\"actual_fps\":0,\"actual_bitrate_kbps\":0,\"encode_latency_ms\":0,\"frame_interval_jitter_ms\":0,\"host_cpu_percent\":80.7,\"host_gpu_percent\":27.2,\"host_gpu_encoder_percent\":0,\"host_net_tx_bps\":581081.441,\"host_gpu_temp_c\":49.6,\"idr_requests\":2,\"ref_invalidations\":0,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069102.564,\"session_uuid\":\"1D21A6A5-A137-8E05-8B0E-72FC1325BBBE\",\"actual_fps\":100.5,\"actual_bitrate_kbps\":48081.9,\"encode_latency_ms\":3.3,\"frame_interval_jitter_ms\":0,\"host_cpu_percent\":93.1,\"host_gpu_percent\":27.7,\"host_gpu_encoder_percent\":14.2,\"host_net_tx_bps\":32569572.338,\"host_gpu_temp_c\":49.2,\"idr_requests\":2,\"ref_invalidations\":0,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069104.564,\"session_uuid\":\"1D21A6A5-A137-8E05-8B0E-72FC1325BBBE\",\"actual_fps\":115,\"actual_bitrate_kbps\":54656.7,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":0.89,\"host_cpu_percent\":96.1,\"host_gpu_percent\":23.9,\"host_gpu_encoder_percent\":26.6,\"host_net_tx_bps\":11257744.58,\"host_gpu_temp_c\":51.1,\"idr_requests\":2,\"ref_invalidations\":0,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069106.564,\"session_uuid\":\"1D21A6A5-A137-8E05-8B0E-72FC1325BBBE\",\"actual_fps\":115.5,\"actual_bitrate_kbps\":54235,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":0.74,\"host_cpu_percent\":75.4,\"host_gpu_percent\":8.6,\"host_gpu_encoder_percent\":26.6,\"host_net_tx_bps\":5928861.887,\"host_gpu_temp_c\":51,\"idr_requests\":2,\"ref_invalidations\":40,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069108.565,\"session_uuid\":\"1D21A6A5-A137-8E05-8B0E-72FC1325BBBE\",\"actual_fps\":115,\"actual_bitrate_kbps\":53234.1,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":0.63,\"host_cpu_percent\":61.3,\"host_gpu_percent\":9.2,\"host_gpu_encoder_percent\":26.6,\"host_net_tx_bps\":3588713.728,\"host_gpu_temp_c\":50.6,\"idr_requests\":2,\"ref_invalidations\":41,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069110.565,\"session_uuid\":\"1D21A6A5-A137-8E05-8B0E-72FC1325BBBE\",\"actual_fps\":114.5,\"actual_bitrate_kbps\":53261.1,\"encode_latency_ms\":3.2,\"frame_interval_jitter_ms\":0.56,\"host_cpu_percent\":70.6,\"host_gpu_percent\":9.4,\"host_gpu_encoder_percent\":26.5,\"host_net_tx_bps\":50333.26,\"host_gpu_temp_c\":50.9,\"idr_requests\":2,\"ref_invalidations\":41,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069112.565,\"session_uuid\":\"1D21A6A5-A137-8E05-8B0E-72FC1325BBBE\",\"actual_fps\":117.5,\"actual_bitrate_kbps\":54161.5,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":0.53,\"host_cpu_percent\":71.5,\"host_gpu_percent\":10.7,\"host_gpu_encoder_percent\":26.8,\"host_net_tx_bps\":100964.06,\"host_gpu_temp_c\":50.9,\"idr_requests\":2,\"ref_invalidations\":41,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069114.565,\"session_uuid\":\"1D21A6A5-A137-8E05-8B0E-72FC1325BBBE\",\"actual_fps\":115,\"actual_bitrate_kbps\":52170.6,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":0.49,\"host_cpu_percent\":67.3,\"host_gpu_percent\":10.4,\"host_gpu_encoder_percent\":26.4,\"host_net_tx_bps\":51004.417,\"host_gpu_temp_c\":51.1,\"idr_requests\":2,\"ref_invalidations\":41,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069116.566,\"session_uuid\":\"1D21A6A5-A137-8E05-8B0E-72FC1325BBBE\",\"actual_fps\":108.5,\"actual_bitrate_kbps\":33749.8,\"encode_latency_ms\":3.2,\"frame_interval_jitter_ms\":0.47,\"host_cpu_percent\":75.8,\"host_gpu_percent\":11.8,\"host_gpu_encoder_percent\":24.8,\"host_net_tx_bps\":67971.406,\"host_gpu_temp_c\":51,\"idr_requests\":2,\"ref_invalidations\":41,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069160.579,\"session_uuid\":\"685DA4A9-0314-B703-2714-37F2B70E83D7\",\"actual_fps\":0,\"actual_bitrate_kbps\":0,\"encode_latency_ms\":3.3,\"frame_interval_jitter_ms\":0,\"host_cpu_percent\":92.3,\"host_gpu_percent\":34.2,\"host_gpu_encoder_percent\":0.1,\"host_net_tx_bps\":2035051.695,\"host_gpu_temp_c\":51.2,\"idr_requests\":2,\"ref_invalidations\":0,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069162.579,\"session_uuid\":\"685DA4A9-0314-B703-2714-37F2B70E83D7\",\"actual_fps\":86.5,\"actual_bitrate_kbps\":47410.8,\"encode_latency_ms\":3.2,\"frame_interval_jitter_ms\":0,\"host_cpu_percent\":97.9,\"host_gpu_percent\":40.2,\"host_gpu_encoder_percent\":17.9,\"host_net_tx_bps\":39013923.485,\"host_gpu_temp_c\":52.6,\"idr_requests\":2,\"ref_invalidations\":4,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069164.579,\"session_uuid\":\"685DA4A9-0314-B703-2714-37F2B70E83D7\",\"actual_fps\":92,\"actual_bitrate_kbps\":50099.9,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":0.49,\"host_cpu_percent\":95.4,\"host_gpu_percent\":44.9,\"host_gpu_encoder_percent\":21.6,\"host_net_tx_bps\":7335792.16,\"host_gpu_temp_c\":53.7,\"idr_requests\":2,\"ref_invalidations\":23,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069166.58,\"session_uuid\":\"685DA4A9-0314-B703-2714-37F2B70E83D7\",\"actual_fps\":97.5,\"actual_bitrate_kbps\":54015.1,\"encode_latency_ms\":3.2,\"frame_interval_jitter_ms\":0.65,\"host_cpu_percent\":87.5,\"host_gpu_percent\":49.8,\"host_gpu_encoder_percent\":22.4,\"host_net_tx_bps\":5812877.121,\"host_gpu_temp_c\":54.1,\"idr_requests\":2,\"ref_invalidations\":26,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069168.58,\"session_uuid\":\"685DA4A9-0314-B703-2714-37F2B70E83D7\",\"actual_fps\":97.5,\"actual_bitrate_kbps\":53927.1,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":0.62,\"host_cpu_percent\":82.2,\"host_gpu_percent\":50,\"host_gpu_encoder_percent\":22.4,\"host_net_tx_bps\":2711999.835,\"host_gpu_temp_c\":53,\"idr_requests\":2,\"ref_invalidations\":26,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069170.581,\"session_uuid\":\"685DA4A9-0314-B703-2714-37F2B70E83D7\",\"actual_fps\":96.5,\"actual_bitrate_kbps\":54533.3,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":0.56,\"host_cpu_percent\":87.1,\"host_gpu_percent\":49.3,\"host_gpu_encoder_percent\":22.5,\"host_net_tx_bps\":58471.878,\"host_gpu_temp_c\":52.9,\"idr_requests\":2,\"ref_invalidations\":26,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069172.581,\"session_uuid\":\"685DA4A9-0314-B703-2714-37F2B70E83D7\",\"actual_fps\":96.5,\"actual_bitrate_kbps\":53911.9,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":0.52,\"host_cpu_percent\":92.2,\"host_gpu_percent\":49.9,\"host_gpu_encoder_percent\":22.3,\"host_net_tx_bps\":107440.968,\"host_gpu_temp_c\":54.8,\"idr_requests\":2,\"ref_invalidations\":26,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069174.581,\"session_uuid\":\"685DA4A9-0314-B703-2714-37F2B70E83D7\",\"actual_fps\":99.5,\"actual_bitrate_kbps\":55865.9,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":0.52,\"host_cpu_percent\":85.7,\"host_gpu_percent\":52.2,\"host_gpu_encoder_percent\":23,\"host_net_tx_bps\":37067.548,\"host_gpu_temp_c\":54.4,\"idr_requests\":2,\"ref_invalidations\":26,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069176.581,\"session_uuid\":\"685DA4A9-0314-B703-2714-37F2B70E83D7\",\"actual_fps\":94,\"actual_bitrate_kbps\":50475.3,\"encode_latency_ms\":3,\"frame_interval_jitter_ms\":0.48,\"host_cpu_percent\":95,\"host_gpu_percent\":48.1,\"host_gpu_encoder_percent\":21.8,\"host_net_tx_bps\":59879.618,\"host_gpu_temp_c\":55.1,\"idr_requests\":2,\"ref_invalidations\":26,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0}]}"},{"name":"sunshine-session-Steam_Big_Picture-2026-09-10T19-45-00.json","text":"{\"app_name\":\"Steam Big Picture\",\"audio_channels\":6,\"client_name\":\"miniPC\",\"codec\":\"HEVC\",\"device_name\":\"miniPC\",\"duration_seconds\":23.8,\"encoder_bitrate_kbps\":57964,\"end_time_unix\":1789069524.7500067,\"events\":[{\"event_type\":\"stream_started\",\"payload\":\"\",\"session_uuid\":\"76DFCCD8-C57C-F903-740D-29163753DDC9\",\"timestamp_unix\":1789069500.9698353},{\"event_type\":\"stream_ended\",\"payload\":\"\",\"session_uuid\":\"76DFCCD8-C57C-F903-740D-29163753DDC9\",\"timestamp_unix\":1789069524.7498584}],\"events_truncated\":false,\"hdr\":false,\"height\":1080,\"host_cpu_model\":\"AMD Ryzen 5 7600 6-Core Processor\",\"host_gpu_model\":\"NVIDIA GeForce RTX 4070 SUPER\",\"protocol\":\"rtsp\",\"requested_bitrate_kbps\":75000,\"samples_truncated\":false,\"server_version\":\"1.18.4-stable.3 -stable.3\",\"start_time_unix\":1789069500.9698775,\"stream_gpu_model\":\"\",\"target_fps\":120,\"total_events\":2,\"total_samples\":11,\"uuid\":\"76DFCCD8-C57C-F903-740D-29163753DDC9\",\"verdict\":\"healthy\",\"width\":1920,\"yuv444\":false,\"samples\":[{\"timestamp_unix\":1789069502.767,\"session_uuid\":\"76DFCCD8-C57C-F903-740D-29163753DDC9\",\"actual_fps\":0,\"actual_bitrate_kbps\":0,\"encode_latency_ms\":0,\"frame_interval_jitter_ms\":0,\"host_cpu_percent\":55.1,\"host_gpu_percent\":1,\"host_gpu_encoder_percent\":0,\"host_net_tx_bps\":168769.102,\"host_gpu_temp_c\":44.6,\"idr_requests\":0,\"ref_invalidations\":0,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069504.767,\"session_uuid\":\"76DFCCD8-C57C-F903-740D-29163753DDC9\",\"actual_fps\":0.5,\"actual_bitrate_kbps\":12.5,\"encode_latency_ms\":0,\"frame_interval_jitter_ms\":0,\"host_cpu_percent\":80.7,\"host_gpu_percent\":2.2,\"host_gpu_encoder_percent\":0.1,\"host_net_tx_bps\":116597.881,\"host_gpu_temp_c\":44.8,\"idr_requests\":2,\"ref_invalidations\":0,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069506.767,\"session_uuid\":\"76DFCCD8-C57C-F903-740D-29163753DDC9\",\"actual_fps\":117.5,\"actual_bitrate_kbps\":15597,\"encode_latency_ms\":3.3,\"frame_interval_jitter_ms\":1408.32,\"host_cpu_percent\":99.5,\"host_gpu_percent\":5.9,\"host_gpu_encoder_percent\":18.4,\"host_net_tx_bps\":13085376.938,\"host_gpu_temp_c\":45,\"idr_requests\":2,\"ref_invalidations\":0,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069508.768,\"session_uuid\":\"76DFCCD8-C57C-F903-740D-29163753DDC9\",\"actual_fps\":120,\"actual_bitrate_kbps\":14416.8,\"encode_latency_ms\":3.2,\"frame_interval_jitter_ms\":1149.94,\"host_cpu_percent\":61,\"host_gpu_percent\":9.4,\"host_gpu_encoder_percent\":30.1,\"host_net_tx_bps\":16557545.622,\"host_gpu_temp_c\":45.2,\"idr_requests\":2,\"ref_invalidations\":5,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069510.768,\"session_uuid\":\"76DFCCD8-C57C-F903-740D-29163753DDC9\",\"actual_fps\":122,\"actual_bitrate_kbps\":23776.7,\"encode_latency_ms\":3.2,\"frame_interval_jitter_ms\":995.91,\"host_cpu_percent\":37,\"host_gpu_percent\":9.6,\"host_gpu_encoder_percent\":30.4,\"host_net_tx_bps\":25443636.098,\"host_gpu_temp_c\":45.3,\"idr_requests\":6,\"ref_invalidations\":66,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069512.768,\"session_uuid\":\"76DFCCD8-C57C-F903-740D-29163753DDC9\",\"actual_fps\":120,\"actual_bitrate_kbps\":7004.3,\"encode_latency_ms\":3.2,\"frame_interval_jitter_ms\":890.77,\"host_cpu_percent\":34.1,\"host_gpu_percent\":9.6,\"host_gpu_encoder_percent\":30.4,\"host_net_tx_bps\":7255266.65,\"host_gpu_temp_c\":45.4,\"idr_requests\":6,\"ref_invalidations\":66,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069514.769,\"session_uuid\":\"76DFCCD8-C57C-F903-740D-29163753DDC9\",\"actual_fps\":119.9,\"actual_bitrate_kbps\":7010.8,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":813.16,\"host_cpu_percent\":32.7,\"host_gpu_percent\":9.6,\"host_gpu_encoder_percent\":30.4,\"host_net_tx_bps\":7879131.084,\"host_gpu_temp_c\":45.5,\"idr_requests\":6,\"ref_invalidations\":66,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069516.769,\"session_uuid\":\"76DFCCD8-C57C-F903-740D-29163753DDC9\",\"actual_fps\":120,\"actual_bitrate_kbps\":29189.5,\"encode_latency_ms\":2.9,\"frame_interval_jitter_ms\":752.84,\"host_cpu_percent\":32,\"host_gpu_percent\":16.3,\"host_gpu_encoder_percent\":29.1,\"host_net_tx_bps\":7521406.245,\"host_gpu_temp_c\":46.5,\"idr_requests\":6,\"ref_invalidations\":66,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069518.769,\"session_uuid\":\"76DFCCD8-C57C-F903-740D-29163753DDC9\",\"actual_fps\":119.5,\"actual_bitrate_kbps\":6414.5,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":704.22,\"host_cpu_percent\":29.7,\"host_gpu_percent\":8.1,\"host_gpu_encoder_percent\":29.5,\"host_net_tx_bps\":4437973.405,\"host_gpu_temp_c\":45.7,\"idr_requests\":6,\"ref_invalidations\":66,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069520.769,\"session_uuid\":\"76DFCCD8-C57C-F903-740D-29163753DDC9\",\"actual_fps\":120,\"actual_bitrate_kbps\":6418.6,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":663.94,\"host_cpu_percent\":30.4,\"host_gpu_percent\":8.3,\"host_gpu_encoder_percent\":30.2,\"host_net_tx_bps\":28025.497,\"host_gpu_temp_c\":45.7,\"idr_requests\":6,\"ref_invalidations\":66,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0},{\"timestamp_unix\":1789069522.769,\"session_uuid\":\"76DFCCD8-C57C-F903-740D-29163753DDC9\",\"actual_fps\":120,\"actual_bitrate_kbps\":6464.6,\"encode_latency_ms\":3.1,\"frame_interval_jitter_ms\":629.87,\"host_cpu_percent\":26,\"host_gpu_percent\":8.3,\"host_gpu_encoder_percent\":30.2,\"host_net_tx_bps\":17771.254,\"host_gpu_temp_c\":45.8,\"idr_requests\":6,\"ref_invalidations\":66,\"client_reported_losses\":0,\"video_dropped\":0,\"audio_dropped\":0}]}"}];
+const $ = s => document.querySelector(s);
+const state = { files: [], results: [], selected: null, sample: true };
+const statusLabel = { ok: 'Czysta', warn: 'Uwagi', crit: 'Problem' };
+const fmtDate = t => new Date(t * 1000).toLocaleString('pl-PL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const fmtDur = s => Engine.fmtT(s);
+const f1 = v => v == null ? '—' : (Math.round(v * 10) / 10).toLocaleString('pl-PL');
+const f0 = v => v == null ? '—' : Math.round(v).toLocaleString('pl-PL');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function opts() { return { trimStart: Math.max(0, +$('#trimStart').value || 0), trimEnd: Math.max(0, +$('#trimEnd').value || 0) }; }
+
+function recompute() {
+  const o = opts();
+  state.results = state.files.map(f => Engine.analyze(f, o)).sort((a, b) => a.start - b.start);
+  if (!state.results.find(r => r.name === state.selected)) {
+    const worst = [...state.results].sort((a, b) => rank(b.status) - rank(a.status))[0];
+    state.selected = worst ? worst.name : null;
+  }
+  renderOverview(); renderDetail();
+}
+const rank = s => ({ ok: 0, warn: 1, crit: 2 }[s]);
+
+async function addFiles(list) {
+  const errs = []; const added = [];
+  for (const file of list) {
+    try { const text = await file.text(); added.push(Engine.parse(file.name, text)); }
+    catch (e) { errs.push(`${file.name}: ${e.message.includes('JSON') ? 'plik nie jest poprawnym JSON-em' : e.message}`); }
+  }
+  if (added.length) {
+    if (state.sample) { state.files = []; state.sample = false; }
+    for (const f of added) { state.files = state.files.filter(x => x.name !== f.name); state.files.push(f); }
+    state.selected = null;
+  }
+  showNotice(errs.length ? 'Pominięto: ' + errs.join('; ') : null, true);
+  recompute();
+}
+function showNotice(msg, err) {
+  const n = $('#notice');
+  if (state.sample && !msg) { n.hidden = false; n.className = 'notice'; n.textContent = 'Przykład: trzy pliki z wieczoru 10.09 (ARC Raiders z epizodem „brak klatek” i przerwą 5 min przed Big Picture). Twoje pliki zastąpią przykład.'; return; }
+  if (!msg) { n.hidden = true; return; }
+  n.hidden = false; n.className = 'notice' + (err ? ' err' : ''); n.textContent = msg;
+}
+
+function shortFindings(r) {
+  const tags = r.findings.filter(x => x.sev !== 'info').map(x => x.title);
+  return tags.length ? tags.join(' · ') : (r.findings.length ? 'tylko informacje' : 'brak');
+}
+
+function renderOverview() {
+  const body = $('#ovBody'); const R = state.results;
+  $('#ovCount').textContent = R.length ? `${R.length} ${R.length === 1 ? 'plik' : R.length < 5 ? 'pliki' : 'plików'}` : '';
+  if (!R.length) { body.innerHTML = `<tr><td colspan="9" class="muted">Brak plików. Przeciągnij pliki sesji powyżej.</td></tr>`; return; }
+  const gaps = Engine.crossGaps(R);
+  let html = '';
+  R.forEach((r, i) => {
+    if (i > 0) {
+      const g = gaps.find(x => x.to === r);
+      if (g) { const flag = g.gap > 5; html += `<tr class="gaprow${flag ? ' flag' : ''}"><td></td><td colspan="8">↳ przerwa ${fmtDur(g.gap)} przed kolejną sesją${flag ? (g.gap > 30 ? ' — sprawdź, czy nie było zawieszenia' : '') : ' — ciągłość'}</td></tr>`; }
+    }
+    html += `<tr class="sess${r.name === state.selected ? ' sel' : ''}" data-name="${esc(r.name)}" tabindex="0">
+      <td><span class="pill ${r.status}">${statusLabel[r.status]}</span></td>
+      <td class="app">${esc(r.app)}</td><td>${esc(r.client)}</td><td class="num">${fmtDate(r.start)}</td>
+      <td class="num">${fmtDur(r.dur)}</td><td class="num">${f0(r.stats.baseline)} / ${r.target}</td>
+      <td class="num">${r.stats.encP99 != null ? f1(r.stats.encP99) + ' ms' : '—'}</td>
+      <td><span class="pill raw">${esc(r.verdict || '?')}</span></td>
+      <td style="white-space:normal;min-width:220px">${esc(shortFindings(r))}</td></tr>`;
+  });
+  body.innerHTML = html;
+  body.querySelectorAll('tr.sess').forEach(tr => {
+    const pick = () => { state.selected = tr.dataset.name; renderOverview(); renderDetail(); };
+    tr.addEventListener('click', pick);
+    tr.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+  });
+}
+
+function stat(k, v, unit) { return `<div class="stat"><span class="k">${k}</span><span class="v">${v}${unit ? ` <small>${unit}</small>` : ''}</span></div>`; }
+
+function renderDetail() {
+  const el = $('#detail'); const r = state.results.find(x => x.name === state.selected);
+  if (!r) { el.hidden = true; return; } el.hidden = false;
+  const s = r.stats;
+  const eps = [
+    ...r.epsStarve.map(e => ({ ...e, kind: 'Brak klatek', cls: e.early ? 'warn' : 'crit' })),
+    ...r.epsGpu.map(e => ({ ...e, kind: 'Przeciążenie GPU/enk.', cls: 'warn' })),
+    ...r.epsBusy.map(e => ({ ...e, kind: 'Spadek przy obciążonym GPU', cls: 'info' }))
+  ].sort((a, b) => a.t - b.t);
+  const findings = r.findings.length ? r.findings : [{ sev: 'ok', title: 'Nic nie wymaga uwagi', text: 'Brak utraty pakietów, brak epizodów spadku FPS i przerw w oknie analizy.' }];
+  el.innerHTML = `
+    <div class="detail-head">
+      <div style="display:grid;gap:6px;min-width:0">
+        <div class="eyebrow">Szczegóły sesji</div>
+        <h2>${esc(r.app)} <span class="muted" style="font-weight:500">· ${esc(r.client)}</span></h2>
+        <div class="chips">
+          <span class="chip">${fmtDate(r.start)}</span><span class="chip">${fmtDur(r.dur)}</span>
+          <span class="chip">${esc(r.codec || '?')} ${r.res} @ ${r.target} fps</span>
+          <span class="chip">${r.reqBitrate ? Math.round(r.reqBitrate / 1000) + ' Mb/s żądane' : ''}</span>
+          <span class="chip">Vibepollo ${esc(r.server || '?')}</span>
+          <span class="chip">${r.segs.length} połącz.</span>
+        </div>
+      </div>
+      <div style="display:grid;gap:8px;justify-items:start">
+        <div class="verdicts"><span class="muted">Analiza:</span><span class="pill ${r.status}">${statusLabel[r.status]}</span><span class="muted">Vibepollo:</span><span class="pill raw">${esc(r.verdict || '?')}</span></div>
+        ${r.verdictNote ? `<div class="vnote">${r.verdictNote}</div>` : ''}
+      </div>
+    </div>
+
+    <div class="findings">${findings.map(x => `<div class="finding ${x.sev}"><span class="bar"></span><div><h3>${esc(x.title)}</h3><p>${esc(x.text)}</p></div></div>`).join('')}</div>
+
+    <div class="chart" id="chartBox">
+      <div class="legend">
+        <span><i style="background:var(--accent)"></i>FPS</span><span><i style="background:var(--s-cpu)"></i>CPU hosta</span><span><i style="background:var(--s-gpu)"></i>GPU hosta</span><span><i style="background:var(--s-enc)"></i>Enkoder GPU</span>
+        <span><i class="box" style="background:var(--shade-crit)"></i>brak klatek</span><span><i class="box" style="background:var(--shade-warn)"></i>przeciążenie GPU</span><span><i class="box" style="background:var(--shade-info)"></i>spadek przy obciążonym GPU</span><span><i class="box" style="background:var(--shade-trim);outline:1px dashed var(--line)"></i>poza oknem analizy</span>
+      </div>
+      <div id="chart"></div>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+
+    <div class="stats">
+      ${stat('FPS typowe (mediana)', f0(s.baseline), '/ ' + r.target)}
+      ${stat('FPS p10', f0(s.fpsP10))}
+      ${stat('Próbki < ½ typowego FPS', f1(s.fpsLow * 100), '%')}
+      ${stat('Enkodowanie mediana', f1(s.encMed), 'ms')}
+      ${stat('Enkodowanie p99 / max', `${f1(s.encP99)} / ${f1(s.encMax)}`, 'ms')}
+      ${stat('CPU hosta śr.', f0(s.cpuMean), '%')}
+      ${stat('CPU ≥95%', f1(s.cpuHot * 100), '% próbek')}
+      ${stat('GPU hosta śr. / max', `${f0(s.gpuMean)} / ${f0(s.gpuMax)}`, '%')}
+      ${stat('Enkoder GPU śr.', f0(s.gencMean), '%')}
+      ${stat('Bitrate mediana', f1(s.bitrateMed != null ? s.bitrateMed / 1000 : null), 'Mb/s')}
+      ${stat('Straty / dropy wideo', `${s.losses} / ${s.vdrop}`)}
+      ${stat('IDR / ref. invalid.', `${s.idrTotal} / ${s.refTotal}`)}
+      ${stat('Jitter mediana', s.jitterReliable ? f1(s.jitterMed) : 'n/d', s.jitterReliable ? 'ms' : 'za krótka sesja')}
+      ${stat('Temp. GPU hosta max', f0(s.gpuTempMax), '°C')}
+      ${stat('Okno analizy', fmtDur(r.winSec), `z ${fmtDur(r.dur)}`)}
+    </div>
+
+    ${eps.length ? `<div style="display:grid;gap:8px"><h3>Epizody</h3><div class="tablewrap"><table>
+      <thead><tr><th class="num">Moment</th><th>Typ</th><th class="num">Długość</th><th class="num">FPS min</th><th class="num">CPU śr.</th><th class="num">GPU śr.</th><th class="num">IDR / ref.</th><th>Uwagi</th></tr></thead>
+      <tbody>${eps.map(e => `<tr><td class="num">${fmtDur(e.t)} <span class="muted">(${new Date((r.start + e.t) * 1000).toLocaleTimeString('pl-PL')})</span></td><td><span class="pill ${e.cls === 'info' ? 'raw' : e.cls}">${e.kind}</span></td><td class="num">${f0(e.dur)} s</td><td class="num">${f0(e.fpsMin)}</td><td class="num">${f0(e.cpu)}%</td><td class="num">${f0(e.gpu)}%</td><td class="num">${e.idr} / ${e.ref}</td><td class="muted">${e.early ? 'początek sesji, możliwe menu' : (e.idr > 0 || e.ref > 20) ? 'rozsynchronizowanie strumienia' : ''}</td></tr>`).join('')}</tbody>
+    </table></div></div>` : ''}
+
+    <div class="copyrow">
+      <button class="primary" id="copyBtn" type="button">Kopiuj podsumowanie do czatu</button>
+      <span class="muted" id="copyMsg" style="font-size:13px">Wklej je Claude'owi, gdy chcesz pogłębić analizę.</span>
+    </div>
+    <textarea class="copyfallback" id="copyFallback" readonly hidden></textarea>`;
+  drawChart(r);
+  $('#copyBtn').addEventListener('click', () => copySummary(r));
+}
+
+function summaryText(r) {
+  const s = r.stats; const L = [];
+  L.push(`Sesja: ${r.app} · klient ${r.client} · ${fmtDate(r.start)} · ${fmtDur(r.dur)} · ${r.codec} ${r.res}@${r.target} · Vibepollo ${r.server}`);
+  L.push(`Ocena analizatora: ${statusLabel[r.status]} (verdict Vibepollo: ${r.verdict})`);
+  L.push(`FPS typowe ${f0(s.baseline)}/${r.target}, p10 ${f0(s.fpsP10)}; enkodowanie mediana ${f1(s.encMed)} ms, p99 ${f1(s.encP99)} ms; CPU śr. ${f0(s.cpuMean)}% (≥95%: ${f1(s.cpuHot * 100)}%), GPU śr. ${f0(s.gpuMean)}%; straty ${s.losses}, dropy ${s.vdrop}; IDR ${s.idrTotal}, ref ${s.refTotal}; okno ${fmtDur(r.winSec)}`);
+  r.findings.forEach(x => L.push(`- [${x.sev}] ${x.title}: ${x.text}`));
+  const eps = [...r.epsStarve.map(e => ['brak klatek', e]), ...r.epsGpu.map(e => ['przeciążenie GPU', e]), ...r.epsBusy.map(e => ['spadek przy obciążonym GPU', e])].sort((a, b) => a[1].t - b[1].t);
+  eps.forEach(([k, e]) => L.push(`  • ${fmtDur(e.t)} (${new Date((r.start + e.t) * 1000).toLocaleTimeString('pl-PL')}) ${k}, ${f0(e.dur)} s, FPS min ${f0(e.fpsMin)}, CPU ${f0(e.cpu)}%, GPU ${f0(e.gpu)}%, IDR/ref ${e.idr}/${e.ref}`));
+  return L.join('\n');
+}
+function copySummary(r) {
+  const all = state.results.length > 1;
+  let txt = summaryText(r);
+  if (all) {
+    const gaps = Engine.crossGaps(state.results).filter(g => g.gap > 5).map(g => `${g.from.app} → ${g.to.app}: przerwa ${fmtDur(g.gap)}`);
+    txt += `\n\nPozostałe pliki: ` + state.results.filter(x => x !== r).map(x => `${x.app} ${fmtDate(x.start)} = ${statusLabel[x.status]}`).join('; ');
+    if (gaps.length) txt += `\nPrzerwy między plikami: ${gaps.join('; ')}`;
+  }
+  const done = ok => { $('#copyMsg').textContent = ok ? 'Skopiowano.' : 'Schowek niedostępny — zaznacz tekst poniżej i skopiuj.'; const ta = $('#copyFallback'); if (!ok) { ta.hidden = false; ta.value = txt; ta.select(); } };
+  try { navigator.clipboard.writeText(txt).then(() => done(true), () => done(false)); } catch (e) { done(false); }
+}
+
+function drawChart(r) {
+  const host = $('#chart'); if (!host) return;
+  const S = r.file.raw.samples; const t0 = r.start;
+  const W = Math.max(320, host.clientWidth || 800);
+  const padL = 40, padR = 12, gap = 18;
+  const panels = [
+    { key: 'fps', h: 150, max: Math.max(r.target, ...S.map(s => s.actual_fps)) * 1.05, unit: 'FPS', series: [{ k: 'actual_fps', c: 'var(--accent)', w: 1.8 }] },
+    { key: 'load', h: 120, max: 100, unit: '%', series: [{ k: 'host_cpu_percent', c: 'var(--s-cpu)', w: 1.2 }, { k: 'host_gpu_percent', c: 'var(--s-gpu)', w: 1.2 }, { k: 'host_gpu_encoder_percent', c: 'var(--s-enc)', w: 1.2 }] },
+    { key: 'enc', h: 80, max: Math.max(12, ...S.map(s => s.encode_latency_ms || 0)) * 1.1, unit: 'ms enk.', series: [{ k: 'encode_latency_ms', c: 'var(--s-enc)', w: 1.2, skipZero: true }] }
+  ];
+  const H = panels.reduce((a, p) => a + p.h, 0) + gap * (panels.length - 1) + 22;
+  const T = Math.max(1, r.dur);
+  const x = t => padL + (t / T) * (W - padL - padR);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Wykres FPS i obciążenia hosta w czasie">`;
+  let y0 = 0;
+  const shade = (a, b, top, h, fill) => `<rect x="${x(a)}" y="${top}" width="${Math.max(1.5, x(b) - x(a))}" height="${h}" fill="${fill}"/>`;
+  panels.forEach((p, pi) => {
+    const top = y0, h = p.h; const y = v => top + h - (Math.min(v, p.max) / p.max) * h;
+    // out-of-window regions
+    svg += shade(0, r.trimStart, top, h, 'var(--shade-trim)') + shade(r.dur - r.trimEnd, r.dur, top, h, 'var(--shade-trim)');
+    const epShade = (eps, fill) => eps.forEach(e => { svg += shade(e.t - r.dt / 2, e.t + e.dur - r.dt / 2, top, h, fill); });
+    epShade(r.epsStarve, 'var(--shade-crit)'); epShade(r.epsGpu, 'var(--shade-warn)'); epShade(r.epsBusy, 'var(--shade-info)');
+    // grid
+    const ticks = p.key === 'load' ? [0, 50, 100] : p.key === 'fps' ? [0, Math.round(r.target / 2), r.target] : [0, Math.round(p.max / 2 / 5) * 5 || 5];
+    ticks.forEach(v => { svg += `<line x1="${padL}" x2="${W - padR}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-width="1"${v ? ' stroke-dasharray="3 4"' : ''}/><text x="${padL - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--muted)">${v}</text>`; });
+    svg += `<text x="${padL + 4}" y="${top + 12}" font-size="11" font-family="IBM Plex Sans, sans-serif" fill="var(--muted)">${p.unit}</text>`;
+    // segment boundaries
+    r.segs.slice(1).forEach(g => { svg += `<line x1="${x(g.t0 - t0)}" x2="${x(g.t0 - t0)}" y1="${top}" y2="${top + h}" stroke="var(--muted)" stroke-dasharray="2 3" stroke-width="1"/>`; });
+    p.series.forEach(se => {
+      let d = ''; let pen = false; let prevU = null;
+      S.forEach(s => {
+        const v = s[se.k]; const t = s.timestamp_unix - t0;
+        const skip = v == null || (se.skipZero && v <= 0) || s.session_uuid !== prevU;
+        if (s.session_uuid !== prevU) { pen = false; prevU = s.session_uuid; }
+        if (v == null || (se.skipZero && v <= 0)) { pen = false; return; }
+        d += `${pen ? 'L' : 'M'}${x(t).toFixed(1)},${y(v).toFixed(1)}`; pen = true;
+      });
+      svg += `<path d="${d}" fill="none" stroke="${se.c}" stroke-width="${se.w}" stroke-linejoin="round" stroke-linecap="round"/>`;
+    });
+    if (p.key === 'fps') {
+      svg += `<line x1="${padL}" x2="${W - padR}" y1="${y(r.stats.baseline)}" y2="${y(r.stats.baseline)}" stroke="var(--accent)" stroke-opacity=".45" stroke-dasharray="6 4"/>`;
+      S.forEach((s, i) => { if (r.lossIdx[i]) svg += `<circle cx="${x(s.timestamp_unix - t0)}" cy="${top + 6}" r="4" fill="var(--crit)"/>`; });
+    }
+    y0 += h + gap;
+  });
+  // time axis
+  const axY = H - 6; const step = niceStep(T, W);
+  for (let t = 0; t <= T + 0.001; t += step) svg += `<text x="${x(t)}" y="${axY}" text-anchor="middle" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--muted)">${Engine.fmtT(t)}</text>`;
+  svg += `<line id="cross" x1="0" x2="0" y1="0" y2="${H - 20}" stroke="var(--ink)" stroke-opacity=".35" visibility="hidden"/>`;
+  svg += `<rect id="hit" x="${padL}" y="0" width="${W - padL - padR}" height="${H - 20}" fill="transparent"/></svg>`;
+  host.innerHTML = svg;
+
+  const tip = $('#tip'), cross = host.querySelector('#cross'), hit = host.querySelector('#hit');
+  const move = ev => {
+    const rect = host.getBoundingClientRect(); const px = (ev.clientX - rect.left) * (W / rect.width);
+    const t = ((px - padL) / (W - padL - padR)) * T;
+    let best = 0, bd = Infinity; S.forEach((s, i) => { const dd = Math.abs(s.timestamp_unix - t0 - t); if (dd < bd) { bd = dd; best = i; } });
+    const s = S[best]; const tx = x(s.timestamp_unix - t0);
+    cross.setAttribute('x1', tx); cross.setAttribute('x2', tx); cross.setAttribute('visibility', 'visible');
+    tip.hidden = false;
+    tip.innerHTML = `<b>${Engine.fmtT(s.timestamp_unix - t0)} · ${new Date(s.timestamp_unix * 1000).toLocaleTimeString('pl-PL')}</b><br>FPS ${f1(s.actual_fps)}<br>CPU ${f0(s.host_cpu_percent)}% · GPU ${f0(s.host_gpu_percent)}%<br>Enkoder ${f0(s.host_gpu_encoder_percent)}% · ${f1(s.encode_latency_ms)} ms<br>Bitrate ${f1((s.actual_bitrate_kbps || 0) / 1000)} Mb/s<br>IDR ${s.idr_requests} · ref ${s.ref_invalidations}${r.inWin[best] ? '' : '<br><span style="color:var(--muted)">poza oknem analizy</span>'}`;
+    const cx = tx * (rect.width / W); const box = $('#chartBox').getBoundingClientRect();
+    const left = cx + host.offsetLeft + 14; tip.style.left = Math.min(left, box.width - tip.offsetWidth - 4) + 'px';
+    tip.style.top = Math.max(0, (ev.clientY - box.top) - 40) + 'px';
+  };
+  hit.addEventListener('pointermove', move); hit.addEventListener('pointerdown', move);
+  hit.addEventListener('pointerleave', () => { tip.hidden = true; cross.setAttribute('visibility', 'hidden'); });
+}
+function niceStep(T, W) { const target = T / Math.max(3, Math.floor(W / 90)); const c = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600]; return c.find(v => v >= target) || 3600; }
+
+// wiring
+const drop = $('#drop');
+['dragenter', 'dragover'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', ev => { const fl = [...(ev.dataTransfer?.files || [])]; if (fl.length) addFiles(fl); });
+document.addEventListener('dragover', e => e.preventDefault()); document.addEventListener('drop', e => e.preventDefault());
+$('#files').addEventListener('change', e => { addFiles([...e.target.files]); e.target.value = ''; });
+$('#pickBtn').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#files').click(); } });
+$('#clearBtn').addEventListener('click', () => { state.files = []; state.sample = false; state.selected = null; showNotice(null); recompute(); });
+['trimStart', 'trimEnd'].forEach(id => $('#' + id).addEventListener('change', recompute));
+let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { const r = state.results.find(x => x.name === state.selected); if (r) drawChart(r); }, 120); });
+
+state.files = SAMPLE.map(s => Engine.parse(s.name, s.text));
+showNotice(null); recompute();
+</script>
