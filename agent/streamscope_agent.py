@@ -208,40 +208,58 @@ class Vibepollo:
         self.jar = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), urllib.request.HTTPCookieProcessor(self.jar))
         self.logged_in = False
+        self.basic = False
 
-    def _req(self, method, path, body=None, params=None):
+    def _req(self, method, path, body=None, params=None, headers=None, basic=False, timeout=30):
         url = self.base + path + ("?" + urllib.parse.urlencode(params) if params else "")
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(url, data=data, method=method)
         req.add_header("Accept", "application/json")
+        req.add_header("X-Requested-With", "XMLHttpRequest")   # the panel's API expects its XHR marker
         if data is not None:
             req.add_header("Content-Type", "application/json")
-        if self.user:
-            # Sunshine-family servers accept Basic auth on the API; the cookie from /api/login covers the rest.
+        for k, v in (headers or {}).items():
+            req.add_header(k, v)
+        if basic:
             token = base64.b64encode(f"{self.user}:{self.password}".encode()).decode()
             req.add_header("Authorization", "Basic " + token)
-        with self.opener.open(req, timeout=30) as r:
+        with self.opener.open(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8") or "null")
 
     def login(self):
+        """Same flow as the panel: fetch a CSRF token, POST /api/auth/login, then ride the session cookie.
+        Older Sunshine/Apollo builds without /api/auth fall back to /api/login and Basic auth."""
         if self.logged_in:
             return
         try:
-            self._req("POST", "/api/login", {"username": self.user, "password": self.password})
+            csrf = (self._req("GET", "/api/csrf-token") or {}).get("csrf_token", "")
+            res = self._req("POST", "/api/auth/login", {"username": self.user, "password": self.password, "remember_me": True},
+                            headers={"X-CSRF-Token": csrf} if csrf else None)
+            if isinstance(res, dict) and res.get("status") is False:
+                raise PermissionError(res.get("error") or "login failed")
+            self.basic = False
         except urllib.error.HTTPError as e:
-            if e.code not in (404, 405):
+            if e.code in (401, 403):
+                raise PermissionError("login failed")
+            if e.code != 404:
                 raise
+            try:
+                self._req("POST", "/api/login", {"username": self.user, "password": self.password})
+            except urllib.error.HTTPError as e2:
+                if e2.code not in (404, 405):
+                    raise
+            self.basic = True
         self.logged_in = True
 
-    def get(self, path, params=None):
+    def get(self, path, params=None, timeout=30):
         self.login()
         try:
-            return self._req("GET", path, params=params)
+            return self._req("GET", path, params=params, basic=self.basic, timeout=timeout)
         except urllib.error.HTTPError as e:
-            if e.code == 401:
+            if e.code == 401:   # session cookie expired: log in again once
                 self.logged_in = False
                 self.login()
-                return self._req("GET", path, params=params)
+                return self._req("GET", path, params=params, basic=self.basic, timeout=timeout)
             raise
 
     def sessions(self, limit):
@@ -256,7 +274,23 @@ class Vibepollo:
         return out
 
     def detail(self, uuid):
-        return self.get(f"/api/history/sessions/{urllib.parse.quote(uuid)}", {"full": "1"})
+        """Like the panel: the normal view first; the full (untruncated) one only when the panel says data was
+        cut. Building a full multi-hour session takes the server well over 30 s, hence the long timeout."""
+        path = f"/api/history/sessions/{urllib.parse.quote(uuid)}"
+        t0 = time.time()
+        # Healthy sessions come back in seconds; some the panel never answers (and it stalls meanwhile),
+        # so a moderate timeout plus skip-after-retries beats waiting minutes.
+        d = self.get(path, timeout=90)
+        full = isinstance(d, dict) and (d.get("samples_truncated") or d.get("events_truncated"))
+        if full:
+            try:
+                d = self.get(path, {"full": "1"}, timeout=180)
+            except (urllib.error.URLError, OSError) as e:
+                # The panel can hang building very long sessions; keep the truncated view (flagged as such).
+                log.warning("vibepollo session %s: full data unavailable (%s), keeping truncated view", uuid, e)
+                full = False
+        log.info("vibepollo session %s fetched in %.0f s%s", uuid, time.time() - t0, " (full)" if full else "")
+        return d
 
 
 def _sid(item):
@@ -324,8 +358,16 @@ def collect_vibepollo(cfg, arc, status, state):
     api = Vibepollo(cfg)
     try:
         items = api.sessions(int(cfg.get("max_sessions", 300)))
+    except PermissionError:
+        status.set("vibepollo", False, "złe dane logowania do panelu Vibepollo (sprawdź username/password w agent/config.json)")
+        return
     except urllib.error.HTTPError as e:
-        status.set("vibepollo", False, "złe dane logowania do panelu Vibepollo" if e.code in (401, 403) else f"HTTP {e.code}")
+        body = ""
+        try:
+            body = e.read().decode("utf-8", "replace")[:120]
+        except Exception:
+            pass
+        status.set("vibepollo", False, "złe dane logowania do panelu Vibepollo" if e.code in (401, 403) else f"HTTP {e.code} {e.url.split('47990')[-1] if e.url else ''} {body}".strip())
         return
     except (urllib.error.URLError, OSError, ValueError) as e:
         status.set("vibepollo", False, f"panel Vibepollo niedostępny ({getattr(e, 'reason', e)})")
@@ -342,21 +384,47 @@ def collect_vibepollo(cfg, arc, status, state):
             groups.append(cur)
 
     done = set(state.get("vibepollo_groups", []))
-    saved = 0
+    fails = state.setdefault("vibepollo_failures", {})     # group key → failed attempts
+    MAX_TRIES = 2
+    gkey = lambda g: ",".join(sorted(_sid(i) for i in g))
+    # Sessions already in the archive (e.g. imported manual exports) need no download: same name = same session.
     for g in groups:
-        key = ",".join(sorted(_sid(i) for i in g))
-        if key in done:
-            continue
+        if gkey(g) not in done and os.path.exists(arc.path("vibepollo/" + export_name({"app_name": g[0].get("app_name"), "start_time_unix": g[0].get("start_time_unix")}))):
+            done.add(gkey(g))
+    state["vibepollo_groups"] = sorted(done)
+    pending = [g for g in reversed(groups) if gkey(g) not in done]                       # newest first
+    todo = [g for g in pending if fails.get(gkey(g), 0) < MAX_TRIES]
+    skipped = len(pending) - len(todo)
+    saved, failed_in_row, failed = 0, 0, 0
+    for n, g in enumerate(todo, 1):
+        status.set("vibepollo", True, f"pobieram sesje z panelu: {n}/{len(todo)}", sessions=len(finished))
+        key = gkey(g)
         try:
             merged = merge_sessions([api.detail(_sid(i)) for i in g])
         except (urllib.error.URLError, OSError, ValueError) as e:
-            log.warning("vibepollo detail failed: %s", e)
+            first = g[0]
+            when = datetime.fromtimestamp(first.get("start_time_unix") or 0).strftime("%Y-%m-%d %H:%M")
+            log.warning("vibepollo session %s (%s %s) failed: %s", _sid(first), first.get("app_name"), when, e)
+            fails[key] = fails.get(key, 0) + 1
+            arc.write_doc("agent_state.json", state)
+            failed += 1
+            failed_in_row += 1
+            if failed_in_row >= 2:   # the panel stalls after a hung request: stop now, the next cycle continues
+                break
             continue
+        failed_in_row = 0
         arc.write("vibepollo", export_name(merged), json.dumps(merged).encode("utf-8"))
         done.add(key)
+        state["vibepollo_groups"] = sorted(done)
+        arc.write_doc("agent_state.json", state)   # keep progress even if the agent is closed mid-way
         saved += 1
-    state["vibepollo_groups"] = sorted(done)
-    status.set("vibepollo", True, f"OK, nowe sesje: {saved}" if saved else "OK, bez nowych sesji", sessions=len(finished))
+    left = len(todo) - saved
+    skipped_all = skipped + sum(1 for g in todo if fails.get(gkey(g), 0) >= MAX_TRIES)
+    note = f"; panel nie oddał {skipped_all} starszych sesji (pominięte, szczegóły w agent.log)" if skipped_all else ""
+    if left > (skipped_all - skipped):
+        status.set("vibepollo", True, f"pobrano {saved}, zostało {left - (skipped_all - skipped)} (ponowię za chwilę){note}", sessions=len(finished))
+    else:
+        status.set("vibepollo", True, (f"OK, nowe sesje: {saved}" if saved else "OK, bez nowych sesji") + note, sessions=len(finished))
 
 
 class Collector(threading.Thread):
@@ -373,7 +441,8 @@ class Collector(threading.Thread):
             self.wake.clear()
 
     def run_once(self):
-        for name, fn, section in (("vibepollo", collect_vibepollo, "vibepollo"), ("steam", collect_steam, "steam"), ("client", collect_client, "client_logs")):
+        # Quick local sources first, so a slow Vibepollo download never delays Steam/K12 logs.
+        for name, fn, section in (("steam", collect_steam, "steam"), ("client", collect_client, "client_logs"), ("vibepollo", collect_vibepollo, "vibepollo")):
             c = self.cfg[section]
             if not c.get("enabled", True):
                 self.status.set(name, True, "wyłączone")
@@ -433,7 +502,7 @@ def make_handler(arc, status, collector):
             q = urllib.parse.parse_qs(u.query)
             if u.path == "/api/info":
                 info = status.snapshot()
-                info.update(agent="StreamScope Agent", version=VERSION, host=socket.gethostname(), files=len(arc.list()), archive=arc.root)
+                info.update(agent="StreamScope Agent", version=VERSION, host=socket.gethostname(), ip=lan_ip(), files=len(arc.list()), archive=arc.root)
                 return self._send(200, info)
             if u.path == "/api/files":
                 return self._send(200, arc.list())
@@ -488,6 +557,16 @@ def make_handler(arc, status, collector):
     return H
 
 
+def lan_ip():
+    """Address of the interface that carries the default route (gethostbyname can return a VPN adapter)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))   # TEST-NET address: nothing is sent, it only selects the route
+            return s.getsockname()[0]
+    except OSError:
+        return socket.gethostbyname(socket.gethostname())
+
+
 def main():
     from logging.handlers import RotatingFileHandler
     handlers = [RotatingFileHandler(os.path.join(AGENT_DIR, "agent.log"), maxBytes=1_000_000, backupCount=2, encoding="utf-8")]
@@ -502,7 +581,7 @@ def main():
     ThreadingHTTPServer.request_queue_size = 64   # default backlog (5) drops bursts of parallel requests
     ThreadingHTTPServer.daemon_threads = True
     srv = ThreadingHTTPServer((cfg["bind"], int(cfg["port"])), make_handler(arc, status, collector))
-    ip = socket.gethostbyname(socket.gethostname())
+    ip = lan_ip()
     log.info("StreamScope Agent %s: http://%s:%s/  (archiwum: %s)", VERSION, ip, cfg["port"], arc.root)
     srv.serve_forever()
 
