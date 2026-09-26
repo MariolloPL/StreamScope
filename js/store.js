@@ -86,7 +86,8 @@ SS.Store = (() => {
     api.usage = async () => null;
     api.persist = async () => true;
     api.info = async () => (await fetch('api/info', { cache: 'no-store' })).json();
-    api.collectNow = () => fetch('api/collect', { method: 'POST' });
+    // Resolves when the agent has finished collecting from every source.
+    api.collectNow = async () => (await fetch('api/collect?wait=1', { method: 'POST' })).json();
   }
 
   api.detectAgent = detectAgent;

@@ -98,12 +98,6 @@
     files.sort((a, b) => a.savedAt - b.savedAt).forEach(f => loadArchived(f, msgs));
     if (files.length) rebuild();
     storageInfo();
-    if (agent) {
-      // The agent checks its sources only every few hours; opening the page asks for a fresh check now.
-      SS.Store.collectNow().catch(() => {});
-      setTimeout(pollAgent, 8000);
-      setInterval(pollAgent, 60000);   // cheap: only lists the local archive
-    }
   }
 
   // Agent archive bookkeeping: id → { size, mtime, key } so changed files (a growing log) are re-parsed.
@@ -149,7 +143,7 @@
     el.textContent = n ? `Zapamiętane w tej przeglądarce: ${n} ${word}${u && u.usage ? ` (${num(u.usage / 1048576, 1)} MB)` : ''}. Wczytają się same przy następnym otwarciu.` : '';
   }
 
-  const SOURCE_LABEL = { vibepollo: 'Vibepollo', steam: 'Steam', client: 'Logi klienta (K12)' };
+  const SOURCE_LABEL = { vibepollo: 'Vibepollo', steam: 'Steam', client: 'Logi K12', watch: 'Obserwacja K12' };
   function agentStatusHtml() {
     const a = state.agent, src = a.sources || {};
     const items = Object.keys(SOURCE_LABEL).filter(k => src[k]).map(k => {
@@ -157,14 +151,14 @@
       return `<span class="chip ${s.ok ? 'good' : 'bad'}" title="${esc(s.msg)}">${SOURCE_LABEL[k]}: ${esc(s.ok ? s.msg.replace(/^OK,?\s*/, '') || 'OK' : s.msg)}</span>`;
     }).join(' ');
     return `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
-      <span><b>Agent na ${esc(a.host)}</b> · ${a.files} plików w archiwum${a.last_run ? ` · sprawdzono ${clock(a.last_run)}` : ''}. Agent sprawdza źródła ${everyText(a.poll_seconds)} i przy każdym otwarciu tej strony.</span>
-      ${items}<button class="small" type="button" id="collectBtn">Sprawdź teraz</button></div>`;
+      <button class="primary small" type="button" id="collectBtn" ${a.running ? 'disabled' : ''}>${a.running ? 'Agent pobiera dane…' : 'Pobierz nowe dane'}</button>
+      <span><b>Agent na ${esc(a.host)}</b> · ${a.files} plików w archiwum${a.last_run ? ` · ostatnie pobranie ${shortDate(a.last_run)}` : ''}. Logi K12 dochodzą same po uruchomieniu i zamknięciu StreamLighta; Vibepollo i Steam pobiera przycisk.</span>
+      ${items}</div>`;
   }
-  const everyText = s => !s ? 'regularnie' : s >= 3600 ? `co ${num(s / 3600, s % 3600 ? 1 : 0)} h` : s >= 60 ? `co ${Math.round(s / 60)} min` : `co ${s} s`;
   async function collectNow() {
-    const b = $('#collectBtn'); if (b) { b.disabled = true; b.textContent = 'Sprawdzam…'; }
-    await SS.Store.collectNow().catch(() => {});
-    setTimeout(pollAgent, 4000);
+    const b = $('#collectBtn'); if (b) { b.disabled = true; b.textContent = 'Pobieram…'; }
+    try { await SS.Store.collectNow(); } catch (e) { /* agent unreachable: status below shows the last known state */ }
+    await pollAgent();
   }
 
   function notice(msg, kind) {

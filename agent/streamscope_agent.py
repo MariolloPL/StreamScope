@@ -38,7 +38,7 @@ CONFIG_PATH = os.environ.get("STREAMSCOPE_CONFIG") or os.path.join(AGENT_DIR, "c
 DEFAULTS = {
     "port": 8765,
     "bind": "0.0.0.0",
-    "poll_seconds": 7200,   # between automatic checks; opening StreamScope also triggers one
+    "check_every_minutes": 0,   # 0 = no periodic checks: collect at start-up and on request; K12 logs via watcher
     "archive_dir": r"%LOCALAPPDATA%\StreamScope\archive",
     "vibepollo": {"enabled": True, "url": "https://localhost:47990", "username": "", "password": "", "max_sessions": 300, "import_dirs": []},
     "steam": {"enabled": True, "logs_dir": r"C:\Program Files (x86)\Steam\logs"},
@@ -428,36 +428,123 @@ def collect_vibepollo(cfg, arc, status, state):
 
 
 class Collector(threading.Thread):
+    """Runs a full collection at start-up, then only on request ("Pobierz nowe dane" / POST /api/collect).
+    check_every_minutes > 0 re-enables periodic runs (the old poll_seconds is ignored). K12 logs additionally arrive via ShareWatcher."""
+
     def __init__(self, cfg, arc, status):
         super().__init__(daemon=True)
         self.cfg, self.arc, self.status = cfg, arc, status
         self.wake = threading.Event()
         self.state = arc.read_doc("agent_state.json", {})
+        self.lock = threading.Lock()          # one collection at a time (full run vs. watcher-triggered)
+        self.done = threading.Condition()
+        self.runs = 0                          # completed full runs, for callers that wait for one
 
     def run(self):
+        poll = int(self.cfg.get("check_every_minutes") or 0) * 60
         while True:
             self.run_once()
-            self.wake.wait(max(15, int(self.cfg["poll_seconds"])))
+            self.wake.wait(max(15, poll) if poll > 0 else None)
             self.wake.clear()
 
+    def request_and_wait(self, timeout):
+        """Ask for a full run and block until it finishes (or timeout). Returns True when it completed."""
+        with self.done:
+            # A run already in progress may have passed some sources: wait for the next complete one.
+            target = self.runs + (2 if self.status.snapshot().get("running") else 1)
+            self.wake.set()
+            return self.done.wait_for(lambda: self.runs >= target, timeout)
+
     def run_once(self):
-        # Quick local sources first, so a slow Vibepollo download never delays Steam/K12 logs.
-        for name, fn, section in (("steam", collect_steam, "steam"), ("client", collect_client, "client_logs"), ("vibepollo", collect_vibepollo, "vibepollo")):
-            c = self.cfg[section]
-            if not c.get("enabled", True):
-                self.status.set(name, True, "wyłączone")
-                continue
+        with self.lock:
+            with self.status.lock:
+                self.status.data["running"] = True
+            # Quick local sources first, so a slow Vibepollo download never delays Steam/K12 logs.
+            for name, fn, section in (("steam", collect_steam, "steam"), ("client", collect_client, "client_logs"), ("vibepollo", collect_vibepollo, "vibepollo")):
+                c = self.cfg[section]
+                if not c.get("enabled", True):
+                    self.status.set(name, True, "wyłączone")
+                    continue
+                try:
+                    if name == "vibepollo":
+                        fn(c, self.arc, self.status, self.state)
+                    else:
+                        fn(c, self.arc, self.status)
+                except Exception as e:  # a broken source must never stop the others
+                    log.exception("collector %s failed", name)
+                    self.status.set(name, False, f"błąd: {e}")
+            self.arc.write_doc("agent_state.json", self.state)
+            with self.status.lock:
+                self.status.data["last_run"] = int(time.time())
+                self.status.data["running"] = False
+        with self.done:
+            self.runs += 1
+            self.done.notify_all()
+
+    def client_only(self):
+        with self.lock:
             try:
-                if name == "vibepollo":
-                    fn(c, self.arc, self.status, self.state)
-                else:
-                    fn(c, self.arc, self.status)
-            except Exception as e:  # a broken source must never stop the others
-                log.exception("collector %s failed", name)
-                self.status.set(name, False, f"błąd: {e}")
-        self.arc.write_doc("agent_state.json", self.state)
-        with self.status.lock:
-            self.status.data["last_run"] = int(time.time())
+                collect_client(self.cfg["client_logs"], self.arc, self.status)
+            except Exception as e:
+                log.exception("client collection failed")
+                self.status.set("client", False, f"błąd: {e}")
+
+
+class ShareWatcher(threading.Thread):
+    """Event-driven copy of client logs: Windows reports changes in the shared K12 folder (SMB change
+    notifications), e.g. when StreamLight starts (new log) or ends (log written), and the logs are copied
+    shortly after. Nothing runs while the folder is quiet. Windows only; elsewhere it stays idle."""
+
+    SETTLE = 20       # s after the first change before copying: lets StreamLight finish writing
+    RETRY = 300       # s before reopening the watch when the share is unreachable (K12 off / asleep)
+
+    def __init__(self, path, collector, status):
+        super().__init__(daemon=True)
+        self.path, self.collector, self.status = path, collector, status
+        self.timer = None
+        self.timer_lock = threading.Lock()
+
+    def _changed(self):
+        # Throttle, not debounce: busy Temp folders change constantly, but logs must still be copied.
+        with self.timer_lock:
+            if self.timer and self.timer.is_alive():
+                return
+            self.timer = threading.Timer(self.SETTLE, self.collector.client_only)
+            self.timer.daemon = True
+            self.timer.start()
+
+    def run(self):
+        if os.name != "nt":
+            return
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateFileW.restype = wintypes.HANDLE
+        k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        k32.ReadDirectoryChangesW.restype = wintypes.BOOL
+        k32.ReadDirectoryChangesW.argtypes = [wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD, wintypes.BOOL, wintypes.DWORD,
+                                              ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID, wintypes.LPVOID]
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        INVALID = wintypes.HANDLE(-1).value
+        FILE_LIST_DIRECTORY, SHARE_ALL, OPEN_EXISTING, BACKUP_SEMANTICS = 0x1, 0x7, 3, 0x02000000
+        NOTIFY = 0x1 | 0x8 | 0x10          # file name, size, last write
+        buf = ctypes.create_string_buffer(64 * 1024)   # 64 KB is the maximum over SMB
+        got = wintypes.DWORD()
+        while True:
+            h = k32.CreateFileW(self.path, FILE_LIST_DIRECTORY, SHARE_ALL, None, OPEN_EXISTING, BACKUP_SEMANTICS, None)
+            if h in (None, INVALID):
+                self.status.set("watch", False, f"nie mogę obserwować {self.path} (K12 wyłączony?), ponowię za {self.RETRY // 60} min")
+                time.sleep(self.RETRY)
+                continue
+            self.status.set("watch", True, "obserwuję folder K12, nowe logi dochodzą same")
+            self._changed()                   # catch up on anything written while we were not watching
+            try:
+                while k32.ReadDirectoryChangesW(h, buf, len(buf), False, NOTIFY, ctypes.byref(got), None, None):
+                    self._changed()
+            finally:
+                k32.CloseHandle(h)
+            self.status.set("watch", False, f"przerwana obserwacja {self.path}, ponowię za {self.RETRY // 60} min")
+            time.sleep(self.RETRY)
 
 
 # ---------------------------------------------------------------- HTTP
@@ -503,7 +590,7 @@ def make_handler(arc, status, collector):
             if u.path == "/api/info":
                 info = status.snapshot()
                 info.update(agent="StreamScope Agent", version=VERSION, host=socket.gethostname(), ip=lan_ip(), files=len(arc.list()), archive=arc.root,
-                            poll_seconds=max(15, int(collector.cfg["poll_seconds"])))
+                            check_every_minutes=int(collector.cfg.get("check_every_minutes") or 0))
                 return self._send(200, info)
             if u.path == "/api/files":
                 return self._send(200, arc.list())
@@ -551,6 +638,10 @@ def make_handler(arc, status, collector):
                     return self._send(413, {"error": "too large"})
                 return self._send(200, {"ok": True, "id": f"manual/{name}"})
             if u.path == "/api/collect":
+                if q.get("wait", ["0"])[0] == "1":
+                    # "Pobierz nowe dane": answer when the run is over so the page can reload right away.
+                    finished = collector.request_and_wait(timeout=900)
+                    return self._send(200, {"ok": True, "finished": finished, **status.snapshot()})
                 collector.wake.set()
                 return self._send(200, {"ok": True})
             return self._send(404, {"error": "not found"})
@@ -579,6 +670,9 @@ def main():
     status = Status()
     collector = Collector(cfg, arc, status)
     collector.start()
+    if cfg["client_logs"].get("enabled", True):
+        for d in cfg["client_logs"].get("dirs") or []:
+            ShareWatcher(d, collector, status).start()
     ThreadingHTTPServer.request_queue_size = 64   # default backlog (5) drops bursts of parallel requests
     ThreadingHTTPServer.daemon_threads = True
     srv = ThreadingHTTPServer((cfg["bind"], int(cfg["port"])), make_handler(arc, status, collector))

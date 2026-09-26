@@ -1,6 +1,6 @@
 {
   "port": 8765,
-  "poll_seconds": 7200,
+  "check_every_minutes": 0,
   "archive_dir": "%LOCALAPPDATA%\\StreamScope\\archive",
   "vibepollo": {
     "enabled": true,
