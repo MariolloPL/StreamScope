@@ -7,9 +7,7 @@
     "url": "https://localhost:47990",
     "username": "",
     "password": "",
-    "import_dirs": [
-      "%USERPROFILE%\\Downloads"
-    ]
+    "import_dirs": []
   },
   "steam": {
     "enabled": true,
