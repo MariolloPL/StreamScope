@@ -649,6 +649,19 @@ def make_handler(arc, status, collector):
     return H
 
 
+class ExclusiveServer(ThreadingHTTPServer):
+    """One agent per port. HTTPServer sets SO_REUSEADDR, which on Windows lets several processes bind the
+    same port at once (a second autostart copy would silently run alongside); take the port exclusively."""
+    allow_reuse_address = False
+    request_queue_size = 64      # default backlog (5) drops bursts of parallel requests
+    daemon_threads = True
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def lan_ip():
     """Address of the interface that carries the default route (gethostbyname can return a VPN adapter)."""
     try:
@@ -669,13 +682,16 @@ def main():
     arc = Archive(cfg["archive_dir"])
     status = Status()
     collector = Collector(cfg, arc, status)
+    # Bind first: if another agent already owns the port, exit before starting any watcher or download.
+    try:
+        srv = ExclusiveServer((cfg["bind"], int(cfg["port"])), make_handler(arc, status, collector))
+    except OSError:
+        log.info("StreamScope Agent already running on port %s; this copy exits", cfg["port"])
+        return
     collector.start()
     if cfg["client_logs"].get("enabled", True):
         for d in cfg["client_logs"].get("dirs") or []:
             ShareWatcher(d, collector, status).start()
-    ThreadingHTTPServer.request_queue_size = 64   # default backlog (5) drops bursts of parallel requests
-    ThreadingHTTPServer.daemon_threads = True
-    srv = ThreadingHTTPServer((cfg["bind"], int(cfg["port"])), make_handler(arc, status, collector))
     ip = lan_ip()
     log.info("StreamScope Agent %s: http://%s:%s/  (archiwum: %s)", VERSION, ip, cfg["port"], arc.root)
     srv.serve_forever()
