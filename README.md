@@ -13,6 +13,9 @@ Pliki są przetwarzane **lokalnie w przeglądarce** i nigdzie nie są wysyłane.
 |---|---|---|
 | Vibepollo / Sunshine (host) | `sunshine-session-<App>-<czas UTC>.json` | próbki co ~2 s: FPS, bitrate, enkodowanie, CPU/GPU/enkoder, straty, IDR/RFI; połączenia (`session_uuid`) |
 | StreamLight / Moonlight (klient) | `StreamLight-<unix>.log`, `Moonlight-<unix>.log` | konfiguracja streamu, VRR/V-sync, markery pada, zdarzenia RFI/IDR, statystyki końcowe („Global video stats”) |
+| Steam Remote Play / PyroWave (host) | `C:\Program Files (x86)\Steam\logs\streaming_log.txt` (+ `.previous.txt`) | bloki `SessionStats` per odcinek (pulpit ↔ gra): enkoder, AvgFPS, ping, capture/convert/encode/network/decode/display, bitrate, łącze, % „Slow…”; zdarzenia „Slow framerate” |
+
+Steam nie zapisuje próbek w czasie, tylko podsumowania odcinków, więc dla Steama benchmark to średnia ważona długością zaznaczonych odcinków (domyślnie: przechwytywanie gry ≥ 20 s). Log Steama z klienta nie zawiera statystyk.
 
 CapFrameX i PresentMon są rozpoznawane, ale jeszcze nieobsługiwane.
 
@@ -41,6 +44,8 @@ css/app.css             style (jasny i ciemny motyw)
 js/core.js              statystyki (percentyle z interpolacją liniową), formatowanie czasu
 js/parsers/vibepollo.js parser JSON-a sesji hosta
 js/parsers/clientlog.js parser logów StreamLight/Moonlight (wiele streamów w jednym logu)
+js/parsers/steamlog.js  parser streaming_log.txt Steama (Remote Play / PyroWave)
+js/store.js             pamięć wczytanych plików i zakresów (IndexedDB)
 js/engine/session.js    parowanie host ↔ klient, synchronizacja zegarów, benchmark zakresu
 js/engine/diagnostics.js silnik diagnostyczny (reguły z analizatora sesji)
 js/storage.js           historia (localStorage), eksport/import, raport dla AI

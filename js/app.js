@@ -8,7 +8,7 @@
   const statusLabel = { ok: 'Czysta', warn: 'Uwagi', crit: 'Problem' };
 
   const state = {
-    hosts: new Map(), logs: new Map(), diag: new Map(),
+    hosts: new Map(), logs: new Map(), diag: new Map(), steam: new Map(), steamSel: new Map(), hidden: new Set(),
     sessions: [], selected: null, ranges: new Map(), timeBase: 'client', compare: new Set()
   };
 
@@ -33,6 +33,13 @@
       if (c.epoch == null) msgs.push(`${n}: brak czasu uniksowego w nazwie pliku, nie da się go zsynchronizować z hostem.`);
       state.logs.set(c.key, c);
       return { key: 'c:' + c.key, kind: 'client' };
+    }
+    if (/streaming_log/i.test(n) || /"SessionStats"|\] Streaming started to /.test(text.slice(0, 2000000))) {
+      const st = SS.parseSteamLog(n, text);
+      if (!st.conns.length) throw new Error('log Steama bez sesji Remote Play (np. log z klienta albo bez statystyk)');
+      // A newer streaming_log.txt is a superset of the old one: same name replaces, connections dedupe by start.
+      state.steam.set(st.key, st);
+      return { key: 's:' + st.key, kind: 'steam' };
     }
     throw new Error('nieobsługiwany format');
   }
@@ -64,7 +71,11 @@
     let files = [], ranges = [];
     try { [files, ranges] = await Promise.all([SS.Store.allFiles(), SS.Store.allRanges()]); }
     catch (e) { notice('Pamięć przeglądarki jest niedostępna (np. tryb prywatny). Wczytane pliki nie zostaną zapamiętane.', 'err'); return; }
-    ranges.forEach(r => state.ranges.set(r.id, { a: r.a, b: r.b, trimMin: r.trimMin || 0 }));
+    ranges.forEach(r => {
+      if (r.hidden) state.hidden.add(r.id);
+      else if (r.segs) state.steamSel.set(r.id, new Set(r.segs));
+      else state.ranges.set(r.id, { a: r.a, b: r.b, trimMin: r.trimMin || 0 });
+    });
     const msgs = [];
     files.sort((a, b) => a.savedAt - b.savedAt).forEach(f => { try { ingest(f.name, f.text, msgs); } catch (e) { /* stale duplicate etc. */ } });
     if (files.length) rebuild();
@@ -73,7 +84,7 @@
 
   async function storageInfo() {
     const el = $('#storeInfo'); if (!el) return;
-    const n = state.hosts.size + state.logs.size;
+    const n = state.hosts.size + state.logs.size + state.steam.size;
     const u = await SS.Store.usage();
     const word = n === 1 ? 'plik' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'pliki' : 'plików';
     el.textContent = n ? `Zapamiętane w tej przeglądarce: ${n} ${word}${u && u.usage ? ` (${num(u.usage / 1048576, 1)} MB)` : ''}. Wczytają się same przy następnym otwarciu.` : '';
@@ -85,7 +96,18 @@
   }
 
   function rebuild() {
-    state.sessions = SS.Session.build([...state.hosts.values()], [...state.logs.values()]);
+    const steamById = new Map();
+    for (const f of state.steam.values()) for (const c of f.conns) {
+      const id = 's:' + c.key;
+      // The same connection can appear in streaming_log.txt and .previous.txt; keep the more complete copy.
+      if (!steamById.has(id) || steamById.get(id).steam.segments.length < c.segments.length) {
+        steamById.set(id, { id, steam: c, file: f, host: null, clients: [], markers: [], events: [], log: null, clientBase: null, offset: 0, t0: c.u0, t1: c.u1, app: c.game });
+      }
+    }
+    state.sessions = SS.Session.build([...state.hosts.values()], [...state.logs.values()])
+      .concat([...steamById.values()])
+      .filter(s => !state.hidden.has(s.id))
+      .sort((a, b) => b.t0 - a.t0);
     if (!state.sessions.find(s => s.id === state.selected)) {
       const paired = state.sessions.find(s => s.host && s.clients.length);
       state.selected = (paired || state.sessions[0] || {}).id || null;
@@ -99,12 +121,17 @@
 
   // ---------- sessions table ----------
   function modeOf(s) {
+    if (s.steam) {
+      const c = s.steam, g = c.segments[c.segments.length - 1], mc = c.maxCapture;
+      return `${shortEnc(g.encoder)} ${mc ? `${mc.w}×${mc.h}@${Math.round(g.fpsLimit || mc.fps)}` : ''} ${g.bandwidthLimitKbps ? num(g.bandwidthLimitKbps / 1000, 0) + ' Mb/s' : ''}`.trim();
+    }
     const h = s.host, st = s.clients[0] && s.clients[0].stream;
     const w = h ? h.width : st && st.width, hh = h ? h.height : st && st.height;
     const fps = h ? h.target : st && st.fps, codec = (h && h.codec) || (st && st.codec) || '';
     return w ? `${codec} ${w}×${hh}@${fps}` : '—';
   }
   function clientCell(s) {
+    if (s.steam) return `Steam → ${esc(s.steam.client)}`;
     if (!s.clients.length) return '<span class="muted">—</span>';
     const names = [...new Set(s.clients.map(c => c.log.client))].join(', ');
     const n = s.clients.length > 1 ? ` ×${s.clients.length}` : '';
@@ -114,9 +141,17 @@
   function renderSessions() {
     const body = $('#sessBody');
     const S = state.sessions;
-    $('#sessCount').textContent = S.length ? `${S.length} ${S.length === 1 ? 'sesja' : S.length % 10 >= 2 && S.length % 10 <= 4 && (S.length % 100 < 10 || S.length % 100 >= 20) ? 'sesje' : 'sesji'} · ${state.hosts.size} plików hosta · ${state.logs.size} logów klienta` : '';
+    $('#sessCount').textContent = S.length ? `${S.length} ${S.length === 1 ? 'sesja' : S.length % 10 >= 2 && S.length % 10 <= 4 && (S.length % 100 < 10 || S.length % 100 >= 20) ? 'sesje' : 'sesji'} · ${state.hosts.size} plików hosta · ${state.logs.size} logów klienta${state.steam.size ? ` · ${state.steam.size} logów Steama` : ''}` : '';
     if (!S.length) { body.innerHTML = `<tr><td colspan="8" class="empty">Brak plików. Przeciągnij pliki powyżej.</td></tr>`; return; }
     body.innerHTML = S.map(s => {
+      if (s.steam) {
+        const sum = SS.steamSummary(steamSegs(s));
+        return `<tr class="pick${s.id === state.selected ? ' sel' : ''}" data-id="${esc(s.id)}" tabindex="0">
+          <td><span class="pill raw">Steam</span></td>
+          <td class="app">${esc(s.app)}</td><td class="num">${date(s.t0)}</td><td class="num">${tfmt(s.t1 - s.t0)}</td>
+          <td class="mono small">${esc(modeOf(s))}</td><td>${clientCell(s)}</td><td class="num">${num(sum.fps, 0)} <span class="muted small">(Steam)</span></td>
+          <td class="wrap small">${esc(steamBottlenecks(sum) || 'brak wąskich gardeł > 1%')}</td></tr>`;
+      }
       const d = diagOf(s);
       const tags = d ? d.findings.filter(f => f.sev !== 'info').map(f => f.title).join(' · ') || 'brak' : '';
       const fps = d ? `${num(d.stats.baseline, 0)} / ${s.host.target}` : (s.clients[0].stream.stats ? `${num(s.clients[0].stream.stats.incoming, 0)} (klient)` : '—');
@@ -160,6 +195,12 @@
   // Forget one session: its host file plus client logs that pair with nothing else.
   async function removeSession(s) {
     if (!confirm(`Usunąć sesję „${s.app}” z ${date(s.t0)} z pamięci przeglądarki? Zapisane podsumowania w Historii zostaną.`)) return;
+    if (s.steam) {
+      // One Steam log holds many connections, so a single one is hidden rather than deleting the file.
+      state.hidden.add(s.id);
+      await SS.Store.putRange({ id: s.id, hidden: true }).catch(() => {});
+      state.selected = null; rebuild(); return;
+    }
     const keys = [];
     if (s.host) { state.hosts.delete(s.host.key); state.diag.delete(s.host.key); keys.push('h:' + s.host.key); }
     for (const log of new Set(s.clients.map(c => c.log))) {
@@ -172,11 +213,119 @@
     rebuild(); storageInfo();
   }
 
+  // ---------- Steam Remote Play ----------
+  const shortEnc = e => (e || '?').replace(/\s*\[.*\]$/, '').replace(/^Pyrowave\b/i, 'PyroWave');
+  // Default benchmark set: game-capture segments of meaningful length (desktop/menu segments skew FPS).
+  function steamSelection(s) {
+    if (!state.steamSel.has(s.id)) {
+      const segs = s.steam.segments;
+      let pick = segs.map((g, i) => (g.source === 'gra' && g.dur >= 20 ? i : -1)).filter(i => i >= 0);
+      if (!pick.length) pick = segs.map((g, i) => (g.dur > 0 ? i : -1)).filter(i => i >= 0);
+      state.steamSel.set(s.id, new Set(pick));
+    }
+    return state.steamSel.get(s.id);
+  }
+  const steamSegs = s => { const sel = steamSelection(s); return s.steam.segments.filter((_, i) => sel.has(i)); };
+  const SLOW_LABEL = { game: 'gra', capture: 'przechwytywanie', convert: 'konwersja', encode: 'enkodowanie', network: 'sieć', decode: 'dekodowanie', display: 'wyświetlanie' };
+  function steamBottlenecks(sum) {
+    return Object.entries(sum.slow).filter(([, v]) => v != null && v >= 1).sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `wolne: ${SLOW_LABEL[k]} ${num(v, 1)}%`).join(' · ');
+  }
+
+  function renderSteamDetail(el, s) {
+    const c = s.steam, segs = c.segments, sel = steamSelection(s);
+    const sum = SS.steamSummary(steamSegs(s));
+    const last = segs[segs.length - 1];
+    const bitrates = [...new Set(c.bitrates.map(b => b.kbps))].map(k => num(k / 1000, 0) + ' Mb/s').join(' → ');
+    const chips = [date(c.u0), tfmt(c.u1 - c.u0), modeOf(s), `dekoder: ${last.decoder || '?'}`, `adres klienta ${c.addr}`];
+    const slowTimes = c.slow.length ? c.slow : [];
+    const bogus = segs.some(g => g.displayBogus);
+    el.innerHTML = `
+      <section class="panel" aria-labelledby="dTitle">
+        <div class="panel-head">
+          <div style="display:grid;gap:6px;min-width:0">
+            <div class="eyebrow">Sesja Steam Remote Play</div>
+            <h2 id="dTitle">${esc(s.app)} <span class="muted" style="font-weight:500">· Steam → ${esc(c.client)}</span></h2>
+            <div class="chips">${chips.map(x => `<span class="chip">${esc(x)}</span>`).join('')}${last.pyrowave ? '<span class="chip good">PyroWave</span>' : ''}</div>
+            ${bitrates ? `<div class="muted small">Docelowy bitrate ustawiany przez Steam: ${esc(bitrates)}</div>` : ''}
+          </div>
+          <button class="small" type="button" id="removeBtn">Usuń sesję z pamięci</button>
+        </div>
+        <p class="caveat">Steam zapisuje tylko podsumowania odcinków (nowy odcinek przy każdej zmianie przechwytywania, np. pulpit ↔ gra), bez próbek co kilka sekund. Dlatego zamiast wykresu i zakresu czasu wybierasz odcinki, a średnie są ważone ich długością.</p>
+      </section>
+      <section class="panel" aria-labelledby="sgTitle">
+        <div class="panel-head"><h2 id="sgTitle">Odcinki</h2><span class="muted small">Zaznacz odcinki do benchmarku. Domyślnie: przechwytywanie gry, min. 20 s.</span></div>
+        <div class="tablewrap"><table>
+          <thead><tr><th></th><th class="num">Koniec</th><th class="num">Długość</th><th>Źródło</th><th>Enkoder</th><th class="num">Rozdz.</th><th class="num">FPS</th><th class="num">Ping</th><th class="num">Sieć</th><th class="num">Dekod.</th><th class="num">Wyśw.</th><th class="num">Bitrate</th><th>Wolne &gt; 1%</th></tr></thead>
+          <tbody>${segs.map((g, i) => `<tr>
+            <td><input type="checkbox" data-sg="${i}" ${sel.has(i) ? 'checked' : ''} aria-label="Uwzględnij odcinek ${i + 1}"></td>
+            <td class="num">${clock(g.u1)}</td><td class="num">${tfmt(g.dur)}</td><td>${g.source}</td><td class="small">${esc(shortEnc(g.encoder))}</td>
+            <td class="num small">${g.width ? `${g.width}×${g.height}` : '—'}</td>
+            <td class="num">${num(g.fps, 1)}</td><td class="num">${num(g.pingMs, 1)}</td><td class="num">${num(g.networkMs, 1)}</td><td class="num">${num(g.decodeMs, 2)}</td>
+            <td class="num">${g.displayMs == null ? (g.displayBogus ? '<span class="muted">bł.</span>' : '—') : num(g.displayMs, 2)}</td>
+            <td class="num">${num(g.serverMbps, 0)}</td>
+            <td class="small">${esc(Object.entries(g.slow).filter(([, v]) => v >= 1).map(([k, v]) => `${SLOW_LABEL[k]} ${num(v, 1)}%`).join(', '))}</td></tr>`).join('')}</tbody>
+        </table></div>
+        ${bogus ? '<p class="caveat">„bł.” = Steam zapisał niemożliwy czas wyświetlania (ujemny albo w sekundach), pomijany w średnich.</p>' : ''}
+      </section>
+      <section class="panel" aria-labelledby="bTitle">
+        <div class="panel-head"><h2 id="bTitle">Benchmark odcinków</h2><span class="muted small">${sum.n} odc., łącznie ${tfmt(sum.dur)}</span></div>
+        ${sum.n ? `<div class="stats">
+          ${stat('Śr. FPS (Steam)', num(sum.fps, 1), last.fpsLimit ? '/ ' + last.fpsLimit : '', true)}
+          ${stat('Czas klatki śr.', num(sum.frameMs, 2), 'ms', true)}
+          ${stat('Bitrate serwera śr.', num(sum.serverMbps, 1), 'Mb/s', true)}
+          ${stat('Przepustowość łącza', num(sum.linkMbps, 0), 'Mb/s')}
+          ${stat('Ping', num(sum.pingMs, 2), 'ms', true)}
+          ${stat('Sieć (transfer klatki)', num(sum.networkMs, 2), 'ms')}
+          ${stat('Przechwytywanie', num(sum.captureMs, 2), sum.captureMs == null ? 'nie mierzone' : 'ms')}
+          ${stat('Konwersja', num(sum.convertMs, 2), sum.convertMs == null ? 'nie mierzone' : 'ms')}
+          ${stat('Enkodowanie', num(sum.encodeMs, 2), sum.encodeMs == null ? 'nie mierzone' : 'ms')}
+          ${stat('Dekodowanie', num(sum.decodeMs, 2), 'ms')}
+          ${stat('Wyświetlanie', num(sum.displayMs, 2), 'ms')}
+          ${Object.entries(sum.slow).map(([k, v]) => stat(`Wolne: ${SLOW_LABEL[k]}`, num(v, 2), '% czasu')).join('')}
+        </div>` : '<p class="muted">Zaznacz przynajmniej jeden odcinek.</p>'}
+        <p class="caveat">AvgFPS Steama to metryka streamu, nie FPS gry, a menu i ekrany ładowania go zaniżają. Przy PyroWave w przechwytywaniu gry Steam raportuje 0 ms dla przechwytywania, konwersji i enkodowania; takie zera są traktowane jako „nie mierzone”.</p>
+      </section>
+      ${slowTimes.length ? `<section class="panel"><details><summary>Zdarzenia „Slow framerate” (${slowTimes.length})</summary><div class="tablewrap"><table>
+        <thead><tr><th class="num">Godzina</th><th>Przyczyna</th><th class="num">Gra</th><th class="num">Przechw.</th><th class="num">Konw.</th><th class="num">Enk.</th><th class="num">Sieć</th><th class="num">Dekod.</th><th class="num">Wyśw.</th></tr></thead>
+        <tbody>${slowTimes.map(e => `<tr><td class="num">${clock(e.u)}</td><td>${esc(e.causes.map(k => SLOW_LABEL[k] || k).join(', ') || '—')}</td>${['game', 'capture', 'convert', 'encode', 'network', 'decode', 'display'].map(k => `<td class="num">${e[k] == null || Math.abs(e[k]) > 10000 ? '—' : num(e[k], 1)}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table></div></details></section>` : ''}
+      <section class="panel">
+        <div class="actions">
+          <button class="primary" id="saveBtn" type="button" ${sum.n ? '' : 'disabled'}>Zapisz do historii</button>
+          <button id="copyBtn" type="button" ${sum.n ? '' : 'disabled'}>Kopiuj raport dla AI</button>
+          <button id="jsonBtn" type="button" ${sum.n ? '' : 'disabled'}>Pobierz podsumowanie JSON</button>
+          <span class="muted small" id="actMsg"></span>
+        </div>
+        <textarea class="fallback" id="copyFallback" readonly hidden></textarea>
+      </section>`;
+
+    el.querySelectorAll('[data-sg]').forEach(cb => cb.addEventListener('change', () => {
+      const set = steamSelection(s);
+      cb.checked ? set.add(+cb.dataset.sg) : set.delete(+cb.dataset.sg);
+      SS.Store.putRange({ id: s.id, segs: [...set] }).catch(() => {});
+      renderSteamDetail(el, s); renderSessions();
+    }));
+    $('#removeBtn').addEventListener('click', () => removeSession(s));
+    const summary = () => SS.Report.steamSummary(s, steamSegs(s), SS.steamSummary(steamSegs(s)));
+    $('#saveBtn').addEventListener('click', () => {
+      const ok = SS.History.add(summary());
+      actMsg(ok ? 'Zapisano w historii tej przeglądarki.' : 'Zapisano tylko do zamknięcia karty: przeglądarka blokuje pamięć lokalną.');
+      renderHistory();
+    });
+    $('#copyBtn').addEventListener('click', () => copyText(SS.Report.text(summary())));
+    $('#jsonBtn').addEventListener('click', () => {
+      const x = summary();
+      download(`streamscope-steam-${x.app.replace(/\W+/g, '_')}-${new Date(x.date * 1000).toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`, JSON.stringify(x, null, 2));
+    });
+  }
+
   // ---------- detail ----------
   function renderDetail() {
     const el = $('#detail');
     const s = current();
     if (!s) { el.innerHTML = ''; return; }
+    if (s.steam) { renderSteamDetail(el, s); return; }
     const h = s.host;
     const chips = [];
     chips.push(date(s.t0), tfmt(s.t1 - s.t0), modeOf(s));
@@ -485,14 +634,22 @@
     ['Bitrate śr. (Mb/s)', x => x.host && x.host.bitrate_avg_mbps, 1], ['Bitrate P95 (Mb/s)', x => x.host && x.host.bitrate_p95_mbps, 1],
     ['Enkodowanie śr. (ms)', x => x.host && x.host.encode_avg_ms, 2], ['Enkodowanie P95 (ms)', x => x.host && x.host.encode_p95_ms, 1],
     ['GPU śr. (%)', x => x.host && x.host.gpu_avg_pct, 0], ['Enkoder śr. (%)', x => x.host && x.host.encoder_avg_pct, 0],
-    ['Straty / dropy', x => x.host && `${x.host.client_reported_losses} / ${x.host.video_dropped}`],
+    ['Straty / dropy', x => x.host && x.host.client_reported_losses != null ? `${x.host.client_reported_losses} / ${x.host.video_dropped}` : null],
     ['Klient (cały stream)', null],
     ['Odbierane FPS', x => x.client && x.client.incoming_fps, 2], ['Renderowane FPS', x => x.client && x.client.rendering_fps, 2],
     ['Utrata sieć (%)', x => x.client && x.client.network_loss_pct, 2], ['Utrata jitter (%)', x => x.client && x.client.jitter_loss_pct, 2],
     ['Opóźnienie sieci (ms)', x => x.client && x.client.network_latency_ms, 0], ['Dekodowanie (ms)', x => x.client && x.client.decode_ms, 2],
     ['Kolejka (ms)', x => x.client && x.client.queue_ms, 2], ['Renderowanie (ms)', x => x.client && x.client.render_ms, 2],
     ['VRR', x => x.client && x.client.vrr], ['Smoothness 2m (%)', x => x.client && x.client.smoothness_2m_pct, 2],
-    ['RFI w zakresie', x => x.client_events && x.client_events.rfi, 0]
+    ['RFI w zakresie', x => x.client_events && x.client_events.rfi, 0],
+    ['Steam Remote Play', null],
+    ['Ping (ms)', x => x.steam && x.steam.ping_ms, 2], ['Sieć – transfer klatki (ms)', x => x.steam && x.steam.network_ms, 2],
+    ['Czas klatki (ms)', x => x.steam && x.steam.frame_ms, 2], ['Enkodowanie Steam (ms)', x => x.steam && x.steam.encode_ms, 2],
+    ['Dekodowanie Steam (ms)', x => x.steam && x.steam.decode_ms, 2], ['Wyświetlanie (ms)', x => x.steam && x.steam.display_ms, 2],
+    ['Przepustowość łącza (Mb/s)', x => x.steam && x.steam.link_mbps, 0],
+    ['Wolne: sieć (% czasu)', x => x.steam && x.steam.slow_pct && x.steam.slow_pct.network, 2],
+    ['Wolne: gra (% czasu)', x => x.steam && x.steam.slow_pct && x.steam.slow_pct.game, 2],
+    ['Wolne: dekodowanie (% czasu)', x => x.steam && x.steam.slow_pct && x.steam.slow_pct.decode, 2]
   ];
   function renderCompare() {
     const panel = $('#comparePanel');
@@ -539,7 +696,9 @@
     if (!state.hosts.size && !state.logs.size) return;
     if (!confirm('Usunąć wszystkie wczytane pliki z pamięci tej przeglądarki? Zapisane podsumowania w Historii zostaną.')) return;
     await SS.Store.clearAll().catch(() => {});
-    state.hosts.clear(); state.logs.clear(); state.diag.clear(); state.ranges.clear(); state.selected = null; notice(''); rebuild(); storageInfo();
+    state.hosts.clear(); state.logs.clear(); state.diag.clear(); state.ranges.clear();
+    state.steam.clear(); state.steamSel.clear(); state.hidden.clear();
+    state.selected = null; notice(''); rebuild(); storageInfo();
   });
 
   $('#compareBtn').addEventListener('click', () => { renderCompare(); $('#comparePanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); });

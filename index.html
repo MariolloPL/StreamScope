@@ -16,7 +16,7 @@
 <div class="wrap">
   <header class="top">
     <div>
-      <div class="eyebrow">Vibepollo / Sunshine → StreamLight / Moonlight</div>
+      <div class="eyebrow">Vibepollo / Sunshine → StreamLight / Moonlight · Steam Remote Play</div>
       <h1>StreamScope</h1>
       <p>Benchmark i diagnostyka sesji game streamingu. Wrzuć plik sesji hosta i log klienta z tego samego wieczoru, wybierz fragment rozgrywki, porównaj z poprzednimi sesjami.</p>
     </div>
@@ -32,7 +32,7 @@
     <section class="drop" id="drop" aria-label="Dodaj pliki">
       <div class="lead">
         <strong>Przeciągnij tu pliki albo wybierz je z dysku</strong>
-        <span class="muted small"><span class="mono">sunshine-session-*.json</span> z hosta · <span class="mono">StreamLight-*.log</span> / <span class="mono">Moonlight-*.log</span> z klienta. Można wiele naraz.</span>
+        <span class="muted small"><span class="mono">sunshine-session-*.json</span> z hosta · <span class="mono">StreamLight-*.log</span> / <span class="mono">Moonlight-*.log</span> z klienta · <span class="mono">Steam\logs\streaming_log*.txt</span> z hosta (Steam Remote Play / PyroWave). Można wiele naraz.</span>
       </div>
       <div class="controls">
         <label class="btn primary" for="files" tabindex="0" id="pickBtn">Wybierz pliki</label>
@@ -67,6 +67,7 @@
           <li><b>Opóźnienie enkodowania 0 ms</b> oznacza brak zakodowanej klatki i jest pomijane w statystykach.</li>
           <li><b>Statystyki klienta</b> pochodzą z bloku „Global video stats” na końcu streamu, więc dotyczą całego streamu, nie wybranego zakresu. Końcowy <i>Bitrate / Peak (10s)</i> to stan z ostatnich sekund, nie średnia. <i>Smoothness (2m)</i> to miara równości klatek przy VRR, nie liczba FPS.</li>
           <li><b>Diagnostyka</b> ocenia cały plik hosta (reguły silnika z analizatora sesji): brak klatek do wysłania, przeciążenie GPU/enkodera, utrata pakietów, nieregularne przerwy. Pole <span class="mono">verdict</span> z Vibepollo jest tylko informacyjne.</li>
+          <li><b>Steam Remote Play / PyroWave:</b> wrzuć <span class="mono">streaming_log.txt</span> (i <span class="mono">streaming_log.previous.txt</span>) z folderu <span class="mono">C:\Program Files (x86)\Steam\logs</span> na <b>hoście</b>. Log z klienta nie ma statystyk. Steam zapisuje podsumowanie przy każdej zmianie przechwytywania (pulpit ↔ gra), więc sesja składa się z odcinków; benchmark to średnia ważona długością zaznaczonych odcinków. AvgFPS Steama to kadencja streamu, nie FPS gry.</li>
           <li><b>Pamięć:</b> wczytane pliki i ustawione zakresy są zapisywane w tej przeglądarce (IndexedDB) i wracają same po ponownym otwarciu strony. Są tylko na tym urządzeniu i w tej przeglądarce; nic nie trafia na serwer. „Wyczyść wszystko” albo „Usuń sesję z pamięci” je kasuje.</li>
           <li>Przy statycznym obrazie Vibepollo schodzi do ok. 16 FPS (keepalive), to nie awaria.</li>
         </ul>
@@ -99,6 +100,7 @@
 <script src="js/core.js"></script>
 <script src="js/parsers/vibepollo.js"></script>
 <script src="js/parsers/clientlog.js"></script>
+<script src="js/parsers/steamlog.js"></script>
 <script src="js/engine/diagnostics.js"></script>
 <script src="js/engine/session.js"></script>
 <script src="js/storage.js"></script>

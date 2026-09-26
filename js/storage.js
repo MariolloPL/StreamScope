@@ -74,6 +74,43 @@ SS.Report = (() => {
     };
   }
 
+  // Steam Remote Play: shared fields mirror the Vibepollo/StreamLight summary so Compare can line them up.
+  function steamSummary(session, segs, sum) {
+    const c = session.steam, last = segs[segs.length - 1] || c.segments[c.segments.length - 1], mc = c.maxCapture;
+    const enc = (last.encoder || '').replace(/\s*\[.*\]$/, '');
+    return {
+      id: `${session.id}|${segs.map(g => Math.round(g.u1)).join(',')}`,
+      date: segs.length ? segs[0].u0 : c.u0, savedAt: Date.now(),
+      app: session.app,
+      streamer: `Steam Remote Play${last.pyrowave ? ' (PyroWave)' : ''}`,
+      host_server: null,
+      resolution: mc ? `${mc.w}x${mc.h}` : last.width ? `${last.width}x${last.height}` : null,
+      target_fps: last.fpsLimit || (mc && Math.round(mc.fps)) || null,
+      codec: last.pyrowave ? 'PyroWave' : enc || null,
+      bitrate_setting_mbps: last.bandwidthLimitKbps ? r2(last.bandwidthLimitKbps / 1000) : null,
+      range: `${segs.length} z ${c.segments.length} odcinków Steama`, duration_s: Math.round(sum.dur),
+      host: {
+        avg_fps: r2(sum.fps), p50_fps: null, p5_fps: null, p1_fps: null, frames_sent_fps: null, pct_ge_90: null, pct_ge_100: null,
+        bitrate_avg_mbps: r2(sum.serverMbps), bitrate_p95_mbps: null,
+        encode_avg_ms: r2(sum.encodeMs), encode_p50_ms: null, encode_p95_ms: null,
+        gpu_avg_pct: null, encoder_avg_pct: null, cpu_avg_pct: null, client_reported_losses: null, video_dropped: null
+      },
+      client: {
+        scope: 'średnia ważona odcinków Steama',
+        incoming_fps: null, decoding_fps: null, rendering_fps: null, network_loss_pct: null, jitter_loss_pct: null,
+        network_latency_ms: r2(sum.pingMs), decode_ms: r2(sum.decodeMs), queue_ms: null, render_ms: null,
+        host_latency_avg_ms: null, vrr: null, smoothness_2m_pct: null, display_refresh_hz: null
+      },
+      steam: {
+        client: c.client, decoder: last.decoder, frame_ms: r2(sum.frameMs), ping_ms: r2(sum.pingMs), network_ms: r2(sum.networkMs),
+        capture_ms: r2(sum.captureMs), convert_ms: r2(sum.convertMs), encode_ms: r2(sum.encodeMs), decode_ms: r2(sum.decodeMs),
+        display_ms: r2(sum.displayMs), server_bitrate_mbps: r2(sum.serverMbps), link_mbps: r2(sum.linkMbps),
+        slow_pct: Object.fromEntries(Object.entries(sum.slow).map(([k, v]) => [k, r2(v)]))
+      },
+      client_events: null, diagnostics: null
+    };
+  }
+
   // VRR as reported, without assumptions: requested → enabled → backend → pacing active.
   function vrrState(st) {
     if (!st) return null;
@@ -93,7 +130,17 @@ SS.Report = (() => {
     L.push(`Mode: ${sum.resolution || '?'} @${sum.target_fps || '?'} ${sum.codec || ''}${sum.bitrate_setting_mbps ? `, ${n(sum.bitrate_setting_mbps, 0)} Mbps` : ''}`);
     L.push(`Date: ${SS.time.date(sum.date)}`);
     L.push(`Range: ${sum.range} (${SS.time.fmt(sum.duration_s)})`);
-    if (sum.host) {
+    if (sum.steam) {
+      const s = sum.steam, sl = s.slow_pct || {};
+      L.push('', `Steam Remote Play → ${s.client} (duration-weighted segment averages; Steam AvgFPS is stream cadence, not game FPS):`);
+      L.push(`${n(sum.host.avg_fps)} avg FPS · ${n(s.frame_ms, 2)} ms frame`);
+      L.push(`${n(s.server_bitrate_mbps)} Mbps server bitrate · link ${n(s.link_mbps, 0)} Mbps`);
+      L.push(`ping ${n(s.ping_ms, 2)} ms · network ${n(s.network_ms, 2)} ms · decode ${n(s.decode_ms, 2)} ms · display ${n(s.display_ms, 2)} ms`);
+      L.push(`capture ${n(s.capture_ms, 2)} · convert ${n(s.convert_ms, 2)} · encode ${n(s.encode_ms, 2)} ms (— = not measured)`);
+      L.push(`slow % of time: game ${n(sl.game, 2)} · capture ${n(sl.capture, 2)} · convert ${n(sl.convert, 2)} · encode ${n(sl.encode, 2)} · network ${n(sl.network, 2)} · decode ${n(sl.decode, 2)} · display ${n(sl.display, 2)}`);
+      L.push(`decoder: ${s.decoder || '?'}`);
+    }
+    else if (sum.host) {
       const h = sum.host;
       L.push('', `Host (${sum.host_server ? 'Vibepollo ' + sum.host_server : 'Vibepollo'}):`);
       L.push(`${n(h.avg_fps, 2)} avg FPS (frames_sent: ${n(h.frames_sent_fps, 2)})`);
@@ -104,7 +151,7 @@ SS.Report = (() => {
       L.push(`GPU ${n(h.gpu_avg_pct, 0)}% · encoder ${n(h.encoder_avg_pct, 0)}% · CPU ${n(h.cpu_avg_pct, 0)}%`);
       L.push(`losses ${h.client_reported_losses} · video dropped ${h.video_dropped}`);
     }
-    if (sum.client) {
+    if (sum.client && !sum.steam) {
       const c = sum.client;
       L.push('', `Client (${sum.streamer}, whole stream):`);
       L.push(`${n(c.incoming_fps, 2)} incoming · ${n(c.rendering_fps, 2)} render`);
@@ -119,5 +166,5 @@ SS.Report = (() => {
     return L.join('\n');
   }
 
-  return { summary, text, vrrState };
+  return { summary, steamSummary, text, vrrState };
 })();
