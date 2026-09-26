@@ -370,7 +370,8 @@ def collect_vibepollo(cfg, arc, status, state):
         status.set("vibepollo", False, "złe dane logowania do panelu Vibepollo" if e.code in (401, 403) else f"HTTP {e.code} {e.url.split('47990')[-1] if e.url else ''} {body}".strip())
         return
     except (urllib.error.URLError, OSError, ValueError) as e:
-        status.set("vibepollo", False, f"panel Vibepollo niedostępny ({getattr(e, 'reason', e)})")
+        status.set("vibepollo", False, f"panel Vibepollo niedostępny ({getattr(e, 'reason', e)}), ponowię za 2 min")
+        state["vibepollo_incomplete"] = True   # e.g. agent started before Vibepollo after a reboot
         return
 
     finished = [i for i in items if _sid(i) and i.get("end_time_unix")]
@@ -422,14 +423,19 @@ def collect_vibepollo(cfg, arc, status, state):
     skipped_all = skipped + sum(1 for g in todo if fails.get(gkey(g), 0) >= MAX_TRIES)
     note = f"; panel nie oddał {skipped_all} starszych sesji (pominięte, szczegóły w agent.log)" if skipped_all else ""
     if left > (skipped_all - skipped):
-        status.set("vibepollo", True, f"pobrano {saved}, zostało {left - (skipped_all - skipped)} (ponowię za chwilę){note}", sessions=len(finished))
+        status.set("vibepollo", True, f"pobrano {saved}, zostało {left - (skipped_all - skipped)} (ponowię za 2 min){note}", sessions=len(finished))
+        state["vibepollo_incomplete"] = True
     else:
+        state["vibepollo_incomplete"] = False
         status.set("vibepollo", True, (f"OK, nowe sesje: {saved}" if saved else "OK, bez nowych sesji") + note, sessions=len(finished))
 
 
 class Collector(threading.Thread):
     """Runs a full collection at start-up, then only on request ("Pobierz nowe dane" / POST /api/collect).
     check_every_minutes > 0 re-enables periodic runs (the old poll_seconds is ignored). K12 logs additionally arrive via ShareWatcher."""
+
+    RETRY_SECONDS = 120
+    MAX_RETRIES = 5
 
     def __init__(self, cfg, arc, status):
         super().__init__(daemon=True)
@@ -442,9 +448,20 @@ class Collector(threading.Thread):
 
     def run(self):
         poll = int(self.cfg.get("check_every_minutes") or 0) * 60
+        retries = 0
         while True:
             self.run_once()
-            self.wake.wait(max(15, poll) if poll > 0 else None)
+            # Vibepollo unreachable or sessions left: retry a few times on its own, then wait for the button.
+            retry = self.state.get("vibepollo_incomplete") and retries < self.MAX_RETRIES
+            retries = retries + 1 if retry else 0
+            if self.state.get("vibepollo_incomplete") and not retry:
+                with self.status.lock:
+                    v = self.status.data["sources"].get("vibepollo")
+                    if v:
+                        v["msg"] = v["msg"].replace("ponowię za 2 min", "kliknij „Pobierz nowe dane”, żeby spróbować ponownie")
+            wait = self.RETRY_SECONDS if retry else (max(15, poll) if poll > 0 else None)
+            if self.wake.wait(wait):
+                retries = 0
             self.wake.clear()
 
     def request_and_wait(self, timeout):
