@@ -4,13 +4,29 @@ SS.History = (() => {
   const KEY = 'streamscope.history.v1';
   let memory = [];   // fallback when storage is blocked (private mode, disabled site data)
 
+  let remote = false;   // true when StreamScope Agent keeps the history for all devices
+
   function load() {
+    if (remote) return memory;
     try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); memory = Array.isArray(v) ? v : []; } catch (e) { /* keep memory */ }
     return memory;
   }
   function save(list) {
     memory = list;
+    if (remote) { fetch('api/history', { method: 'PUT', body: JSON.stringify(list) }).catch(() => {}); return true; }
     try { localStorage.setItem(KEY, JSON.stringify(list)); return true; } catch (e) { return false; }
+  }
+  // Switch to the agent's shared history. Entries saved earlier in this browser are merged in once.
+  async function useAgent() {
+    const r = await fetch('api/history', { cache: 'no-store' });
+    const shared = r.ok ? await r.json() : [];
+    const local = load();
+    remote = true;
+    const byId = new Map((Array.isArray(shared) ? shared : []).map(x => [x.id, x]));
+    let added = 0;
+    local.forEach(x => { if (!byId.has(x.id)) { byId.set(x.id, x); added++; } });
+    memory = [...byId.values()].sort((a, b) => b.date - a.date);
+    if (added) save(memory);
   }
   function add(entry) { const list = load().filter(x => x.id !== entry.id); list.push(entry); list.sort((a, b) => b.date - a.date); return save(list); }
   function remove(id) { return save(load().filter(x => x.id !== id)); }
@@ -30,7 +46,7 @@ SS.History = (() => {
     return valid.length;
   }
 
-  return { load, add, remove, exportJson, importJson };
+  return { load, add, remove, exportJson, importJson, useAgent };
 })();
 
 SS.Report = (() => {

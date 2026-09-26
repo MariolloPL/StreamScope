@@ -1,0 +1,24 @@
+{
+  "port": 8765,
+  "poll_seconds": 60,
+  "archive_dir": "%LOCALAPPDATA%\\StreamScope\\archive",
+  "vibepollo": {
+    "enabled": true,
+    "url": "https://localhost:47990",
+    "username": "",
+    "password": "",
+    "import_dirs": [
+      "%USERPROFILE%\\Downloads"
+    ]
+  },
+  "steam": {
+    "enabled": true,
+    "logs_dir": "C:\\Program Files (x86)\\Steam\\logs"
+  },
+  "client_logs": {
+    "enabled": true,
+    "dirs": [
+      "\\\\K12\\StreamLightLogs"
+    ]
+  }
+}

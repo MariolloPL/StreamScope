@@ -15,6 +15,7 @@
 
   const state = {
     hosts: new Map(), logs: new Map(), diag: new Map(), steam: new Map(), steamSel: new Map(), hidden: new Set(),
+    agent: null, fileIndex: new Map(),
     sessions: [], selected: null, ranges: new Map(), timeBase: 'client', compare: new Set(),
     filter: (() => { try { return localStorage.getItem('streamscope.filter') || 'all'; } catch (e) { return 'all'; } })()
   };
@@ -73,28 +74,91 @@
     storageInfo();
   }
 
-  // Startup: bring back every file and range saved in earlier visits.
+  // Startup: bring back every file and range saved in earlier visits (this browser, or the agent's archive).
   async function restore() {
+    const agent = await SS.Store.detectAgent();
+    if (agent) {
+      state.agent = agent;
+      $('#clearBtn').hidden = true;   // the archive belongs to the agent; single sessions can still be hidden
+      await SS.History.useAgent().catch(() => {});
+      renderHistory();
+    }
     let files = [], ranges = [];
     try { [files, ranges] = await Promise.all([SS.Store.allFiles(), SS.Store.allRanges()]); }
-    catch (e) { notice('Pamięć przeglądarki jest niedostępna (np. tryb prywatny). Wczytane pliki nie zostaną zapamiętane.', 'err'); return; }
+    catch (e) {
+      notice(agent ? 'Nie udało się pobrać plików z agenta.' : 'Pamięć przeglądarki jest niedostępna (np. tryb prywatny). Wczytane pliki nie zostaną zapamiętane.', 'err');
+      return;
+    }
     ranges.forEach(r => {
       if (r.hidden) state.hidden.add(r.id);
       else if (r.segs) state.steamSel.set(r.id, new Set(r.segs));
       else state.ranges.set(r.id, { a: r.a, b: r.b, trimMin: r.trimMin || 0 });
     });
     const msgs = [];
-    files.sort((a, b) => a.savedAt - b.savedAt).forEach(f => { try { ingest(f.name, f.text, msgs); } catch (e) { /* stale duplicate etc. */ } });
+    files.sort((a, b) => a.savedAt - b.savedAt).forEach(f => loadArchived(f, msgs));
     if (files.length) rebuild();
     storageInfo();
+    if (agent) setInterval(pollAgent, 60000);
+  }
+
+  // Agent archive bookkeeping: id → { size, mtime, key } so changed files (a growing log) are re-parsed.
+  function loadArchived(f, msgs) {
+    let key = null;
+    try { key = ingest(f.name, f.text, msgs).key; } catch (e) { /* duplicate or unsupported: remember it anyway */ }
+    if (f.id) state.fileIndex.set(f.id, { size: f.size, mtime: f.mtime, key });
+  }
+  function unload(key) {
+    if (!key) return;
+    const k = key.slice(2);
+    if (key[0] === 'h') { state.hosts.delete(k); state.diag.delete(k); }
+    else if (key[0] === 'c') state.logs.delete(k);
+    else if (key[0] === 's') state.steam.delete(k);
+  }
+  let polling = false;
+  async function pollAgent() {
+    if (polling) return;
+    polling = true;
+    try {
+      const list = await SS.Store.listFiles();
+      let changed = 0;
+      for (const f of list) {
+        const prev = state.fileIndex.get(f.id);
+        if (prev && prev.size === f.size && prev.mtime === f.mtime) continue;
+        if (prev) unload(prev.key);
+        loadArchived({ ...f, text: await SS.Store.readFile(f.id) }, []);
+        changed++;
+      }
+      state.agent = await SS.Store.info();
+      if (changed) { rebuild(); if (!$('#viewHistory').hidden) renderHistory(); }
+      storageInfo();
+    } catch (e) { /* agent briefly unreachable (PC asleep): try again next minute */ }
+    polling = false;
   }
 
   async function storageInfo() {
     const el = $('#storeInfo'); if (!el) return;
+    if (state.agent) { el.innerHTML = agentStatusHtml(); const b = $('#collectBtn'); if (b) b.onclick = collectNow; return; }
     const n = state.hosts.size + state.logs.size + state.steam.size;
     const u = await SS.Store.usage();
     const word = n === 1 ? 'plik' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'pliki' : 'plików';
     el.textContent = n ? `Zapamiętane w tej przeglądarce: ${n} ${word}${u && u.usage ? ` (${num(u.usage / 1048576, 1)} MB)` : ''}. Wczytają się same przy następnym otwarciu.` : '';
+  }
+
+  const SOURCE_LABEL = { vibepollo: 'Vibepollo', steam: 'Steam', client: 'Logi klienta (K12)' };
+  function agentStatusHtml() {
+    const a = state.agent, src = a.sources || {};
+    const items = Object.keys(SOURCE_LABEL).filter(k => src[k]).map(k => {
+      const s = src[k];
+      return `<span class="chip ${s.ok ? 'good' : 'bad'}" title="${esc(s.msg)}">${SOURCE_LABEL[k]}: ${esc(s.ok ? s.msg.replace(/^OK,?\s*/, '') || 'OK' : s.msg)}</span>`;
+    }).join(' ');
+    return `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+      <span><b>Agent na ${esc(a.host)}</b> · ${a.files} plików w archiwum${a.last_run ? ` · sprawdzono ${clock(a.last_run)}` : ''}. Nowe logi pojawiają się same (co minutę), widoczne na każdym urządzeniu.</span>
+      ${items}<button class="small" type="button" id="collectBtn">Sprawdź teraz</button></div>`;
+  }
+  async function collectNow() {
+    const b = $('#collectBtn'); if (b) { b.disabled = true; b.textContent = 'Sprawdzam…'; }
+    await SS.Store.collectNow().catch(() => {});
+    setTimeout(pollAgent, 4000);
   }
 
   function notice(msg, kind) {
@@ -215,8 +279,9 @@
   // Forget one session: its host file plus client logs that pair with nothing else.
   async function removeSession(s) {
     if (!confirm(`Usunąć sesję „${s.app}” z ${date(s.t0)} z pamięci przeglądarki? Zapisane podsumowania w Historii zostaną.`)) return;
-    if (s.steam) {
-      // One Steam log holds many connections, so a single one is hidden rather than deleting the file.
+    if (s.steam || state.agent) {
+      // One Steam log holds many connections, and the agent would re-collect deleted files from their
+      // sources, so the session is hidden (remembered) rather than deleting any file.
       state.hidden.add(s.id);
       await SS.Store.putRange({ id: s.id, hidden: true }).catch(() => {});
       state.selected = null; rebuild(); return;
@@ -731,7 +796,7 @@
   $('#files').addEventListener('change', e => { addFiles([...e.target.files]); e.target.value = ''; });
   $('#pickBtn').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#files').click(); } });
   $('#clearBtn').addEventListener('click', async () => {
-    if (!state.hosts.size && !state.logs.size) return;
+    if (!state.hosts.size && !state.logs.size && !state.steam.size) return;
     if (!confirm('Usunąć wszystkie wczytane pliki z pamięci tej przeglądarki? Zapisane podsumowania w Historii zostaną.')) return;
     await SS.Store.clearAll().catch(() => {});
     state.hosts.clear(); state.logs.clear(); state.diag.clear(); state.ranges.clear();

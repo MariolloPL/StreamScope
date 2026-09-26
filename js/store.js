@@ -47,5 +47,48 @@ SS.Store = (() => {
     try { return navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null; } catch (e) { return null; }
   }
 
-  return { putFile, allFiles, deleteFile, putRange, allRanges, clearAll, persist, usage };
+  const api = { putFile, allFiles, deleteFile, putRange, allRanges, clearAll, persist, usage, agent: null };
+
+  // When the page is served by StreamScope Agent, the agent's archive replaces this browser's IndexedDB,
+  // so every device on the network sees the same files, ranges and history.
+  async function detectAgent() {
+    try {
+      const r = await fetch('api/info', { cache: 'no-store' });
+      if (!r.ok) return null;
+      const info = await r.json();
+      if (!info || info.agent !== 'StreamScope Agent') return null;
+      useAgent(info);
+      return info;
+    } catch (e) { return null; }
+  }
+
+  function useAgent(info) {
+    api.agent = info;
+    let prefs = null, saveTimer = null;
+    const loadPrefs = async () => prefs || (prefs = await (await fetch('api/prefs', { cache: 'no-store' })).json() || {});
+    const savePrefs = () => {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => fetch('api/prefs', { method: 'PUT', body: JSON.stringify(prefs) }).catch(() => {}), 400);
+    };
+    api.listFiles = async () => (await fetch('api/files', { cache: 'no-store' })).json();
+    api.readFile = async id => (await fetch('api/file?id=' + encodeURIComponent(id), { cache: 'no-store' })).text();
+    api.allFiles = async () => {
+      const list = await api.listFiles();
+      const out = [];
+      for (const f of list) out.push({ key: f.id, id: f.id, name: f.name, size: f.size, mtime: f.mtime, savedAt: f.mtime, text: await api.readFile(f.id) });
+      return out;
+    };
+    api.putFile = rec => fetch('api/files?name=' + encodeURIComponent(rec.name), { method: 'POST', body: rec.text }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); });
+    api.deleteFile = async () => {};   // sources would re-supply the file; the app hides sessions instead
+    api.allRanges = async () => Object.values((await loadPrefs()).ranges || {});
+    api.putRange = async r => { await loadPrefs(); prefs.ranges = prefs.ranges || {}; prefs.ranges[r.id] = r; savePrefs(); };
+    api.clearAll = async () => { await loadPrefs(); prefs.ranges = {}; savePrefs(); };
+    api.usage = async () => null;
+    api.persist = async () => true;
+    api.info = async () => (await fetch('api/info', { cache: 'no-store' })).json();
+    api.collectNow = () => fetch('api/collect', { method: 'POST' });
+  }
+
+  api.detectAgent = detectAgent;
+  return api;
 })();

@@ -28,6 +28,26 @@ CapFrameX i PresentMon są rozpoznawane, ale jeszcze nieobsługiwane.
 
 Markery: wyłącz i włącz pad podłączony do klienta na początku i na końcu fragmentu, który chcesz zmierzyć. W logu pojawi się `Gamepad N is gone` i ponowne wykrycie pada. Parser nie zależy od modelu pada. Obsługuje też przyszłe wpisy `USER_MARKER: <nazwa>`.
 
+## StreamScope Agent (automatyczne zbieranie logów, wspólne dane dla PC i telefonu)
+
+`agent/streamscope_agent.py` działa na gamingowym PC (Python, tylko biblioteka standardowa) i:
+
+- co minutę zbiera logi do jednego archiwum (domyślnie `%LOCALAPPDATA%\StreamScope\archive`):
+  - sesje Vibepollo z API panelu (`/api/history/sessions`), łącząc reconnecty tak samo jak eksport w panelu, oraz stare eksporty z `import_dirs`,
+  - `streaming_log*.txt` Steama,
+  - logi `StreamLight-*.log` / `Moonlight-*.log` z udostępnionego folderu klienta (np. `\\K12\StreamLightLogs`);
+- udostępnia StreamScope w sieci domowej pod `http://<IP-PC>:8765/`. Każde urządzenie widzi te same sesje, zakresy i historię. Pliki wrzucone ręcznie też trafiają do archiwum.
+
+Konfiguracja: skopiuj `agent/config.example.json` do `agent/config.json` (plik jest w `.gitignore`) i wpisz login i hasło do panelu Vibepollo oraz ścieżkę do logów klienta.
+
+Uruchomienie: `agent\start-agent.cmd`, a autostart po zalogowaniu: `agent\install-autostart.cmd`. Żeby telefon miał dostęp, Zapora Windows musi przepuszczać port 8765 w sieci prywatnej (PowerShell jako administrator):
+
+```powershell
+New-NetFirewallRule -DisplayName "StreamScope Agent" -Direction Inbound -Protocol TCP -LocalPort 8765 -Profile Private -Action Allow
+```
+
+Strona na GitHub Pages działa dalej bez agenta. Wtedy pliki wgrywasz ręcznie, a dane zostają w przeglądarce.
+
 ## Uruchomienie lokalne
 
 Wystarczy otworzyć `index.html` w przeglądarce, bez budowania. Można też uruchomić dowolny serwer statyczny:

@@ -4,3 +4,8 @@ claude/logs/
 sunshine-session-*.json
 PresentMon-*.csv
 
+
+# Agent: local config (contains the Vibepollo password) and runtime files
+agent/config.json
+agent/agent.log
+agent/__pycache__/
