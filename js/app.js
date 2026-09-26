@@ -98,7 +98,12 @@
     files.sort((a, b) => a.savedAt - b.savedAt).forEach(f => loadArchived(f, msgs));
     if (files.length) rebuild();
     storageInfo();
-    if (agent) setInterval(pollAgent, 60000);
+    if (agent) {
+      // The agent checks its sources only every few hours; opening the page asks for a fresh check now.
+      SS.Store.collectNow().catch(() => {});
+      setTimeout(pollAgent, 8000);
+      setInterval(pollAgent, 60000);   // cheap: only lists the local archive
+    }
   }
 
   // Agent archive bookkeeping: id → { size, mtime, key } so changed files (a growing log) are re-parsed.
@@ -152,9 +157,10 @@
       return `<span class="chip ${s.ok ? 'good' : 'bad'}" title="${esc(s.msg)}">${SOURCE_LABEL[k]}: ${esc(s.ok ? s.msg.replace(/^OK,?\s*/, '') || 'OK' : s.msg)}</span>`;
     }).join(' ');
     return `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
-      <span><b>Agent na ${esc(a.host)}</b> · ${a.files} plików w archiwum${a.last_run ? ` · sprawdzono ${clock(a.last_run)}` : ''}. Nowe logi pojawiają się same (co minutę), widoczne na każdym urządzeniu.</span>
+      <span><b>Agent na ${esc(a.host)}</b> · ${a.files} plików w archiwum${a.last_run ? ` · sprawdzono ${clock(a.last_run)}` : ''}. Agent sprawdza źródła ${everyText(a.poll_seconds)} i przy każdym otwarciu tej strony.</span>
       ${items}<button class="small" type="button" id="collectBtn">Sprawdź teraz</button></div>`;
   }
+  const everyText = s => !s ? 'regularnie' : s >= 3600 ? `co ${num(s / 3600, s % 3600 ? 1 : 0)} h` : s >= 60 ? `co ${Math.round(s / 60)} min` : `co ${s} s`;
   async function collectNow() {
     const b = $('#collectBtn'); if (b) { b.disabled = true; b.textContent = 'Sprawdzam…'; }
     await SS.Store.collectNow().catch(() => {});

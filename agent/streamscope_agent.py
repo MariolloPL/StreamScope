@@ -38,7 +38,7 @@ CONFIG_PATH = os.environ.get("STREAMSCOPE_CONFIG") or os.path.join(AGENT_DIR, "c
 DEFAULTS = {
     "port": 8765,
     "bind": "0.0.0.0",
-    "poll_seconds": 60,
+    "poll_seconds": 7200,   # between automatic checks; opening StreamScope also triggers one
     "archive_dir": r"%LOCALAPPDATA%\StreamScope\archive",
     "vibepollo": {"enabled": True, "url": "https://localhost:47990", "username": "", "password": "", "max_sessions": 300, "import_dirs": []},
     "steam": {"enabled": True, "logs_dir": r"C:\Program Files (x86)\Steam\logs"},
@@ -502,7 +502,8 @@ def make_handler(arc, status, collector):
             q = urllib.parse.parse_qs(u.query)
             if u.path == "/api/info":
                 info = status.snapshot()
-                info.update(agent="StreamScope Agent", version=VERSION, host=socket.gethostname(), ip=lan_ip(), files=len(arc.list()), archive=arc.root)
+                info.update(agent="StreamScope Agent", version=VERSION, host=socket.gethostname(), ip=lan_ip(), files=len(arc.list()), archive=arc.root,
+                            poll_seconds=max(15, int(collector.cfg["poll_seconds"])))
                 return self._send(200, info)
             if u.path == "/api/files":
                 return self._send(200, arc.list())

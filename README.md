@@ -32,7 +32,7 @@ Markery: wyłącz i włącz pad podłączony do klienta na początku i na końcu
 
 `agent/streamscope_agent.py` działa na gamingowym PC (Python, tylko biblioteka standardowa) i:
 
-- co minutę zbiera logi do jednego archiwum (domyślnie `%LOCALAPPDATA%\StreamScope\archive`):
+- co 2 h (`poll_seconds`) i przy każdym otwarciu StreamScope zbiera logi do jednego archiwum (domyślnie `%LOCALAPPDATA%\StreamScope\archive`):
   - sesje Vibepollo z API panelu (`/api/history/sessions`), łącząc reconnecty tak samo jak eksport w panelu; `import_dirs` służy tylko do jednorazowego przejęcia starych, ręcznie pobranych eksportów,
   - `streaming_log*.txt` Steama,
   - logi `StreamLight-*.log` / `Moonlight-*.log` z udostępnionego folderu klienta (np. `\\K12\StreamLightLogs`);
