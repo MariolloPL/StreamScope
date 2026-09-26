@@ -15,7 +15,9 @@
   // ---------- file intake ----------
   // Parses one file into state. Returns { key, kind } when added, throws with a user-facing reason otherwise.
   function ingest(n, text, msgs) {
-    if (/\.json$/i.test(n) || /^\s*[{[]/.test(text.slice(0, 50))) {
+    // Only .json files (or extension-less text that starts with "{") go to the JSON path; plain-text logs
+    // often start with "[timestamp]" and must not be reported as broken JSON.
+    if (/\.json$/i.test(n) || (!/\.(log|txt|csv)$/i.test(n) && /^\s*\{/.test(text.slice(0, 50)))) {
       if (/^CapFrameX/i.test(n) || /"Runs"\s*:/.test(text.slice(0, 4000))) throw new Error('CapFrameX jeszcze nieobsługiwany');
       const h = SS.parseVibepollo(n, text);
       if (state.hosts.has(h.key)) throw new Error(`duplikat ${state.hosts.get(h.key).name}`);
@@ -27,12 +29,12 @@
     if (/(StreamLight|Moonlight)-\d+/i.test(n) || /SDL Info \(\d+\)|Global video stats/.test(text.slice(0, 200000))) {
       const c = SS.parseClientLog(n, text);
       if (state.logs.has(c.key)) throw new Error('duplikat');
-      if (!c.streams.length) throw new Error('brak streamu w logu');
+      if (!c.streams.length) throw new Error('log bez żadnego streamu (tylko uruchomienie aplikacji)');
       if (c.epoch == null) msgs.push(`${n}: brak czasu uniksowego w nazwie pliku, nie da się go zsynchronizować z hostem.`);
       state.logs.set(c.key, c);
       return { key: 'c:' + c.key, kind: 'client' };
     }
-    throw new Error('nieznany format');
+    throw new Error('nieobsługiwany format');
   }
 
   async function addFiles(list) {
@@ -50,8 +52,8 @@
       } catch (e) { skipped.push(`${n}: ${e.message}`); }
     }
     if (unsaved) msgs.push(`Nie udało się zapisać ${unsaved} plików w pamięci przeglądarki; po zamknięciu strony trzeba je będzie wczytać ponownie.`);
-    if (skipped.length) msgs.push('Pominięto: ' + skipped.join('; '));
-    notice(msgs.join(' '), skipped.length && !added ? 'err' : '');
+    const head = `Dodano ${added} z ${list.length} plików.${skipped.length ? ` Pominięto ${skipped.length}:` : ''}`;
+    notice([head, ...skipped.map(x => '• ' + x), ...msgs].join('\n'), skipped.length && !added ? 'err' : added ? 'ok' : '');
     if (added) { state.selected = null; SS.Store.persist(); }
     rebuild();
     storageInfo();
