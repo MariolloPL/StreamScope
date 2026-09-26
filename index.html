@@ -37,8 +37,9 @@
       <div class="controls">
         <label class="btn primary" for="files" tabindex="0" id="pickBtn">Wybierz pliki</label>
         <input id="files" type="file" multiple accept=".json,.log,.txt,application/json,text/plain">
-        <button id="clearBtn" type="button">Wyczyść</button>
+        <button id="clearBtn" type="button">Wyczyść wszystko</button>
       </div>
+      <span class="muted small" id="storeInfo" style="flex-basis:100%"></span>
     </section>
     <div id="notice" class="notice" hidden></div>
 
@@ -66,6 +67,7 @@
           <li><b>Opóźnienie enkodowania 0 ms</b> oznacza brak zakodowanej klatki i jest pomijane w statystykach.</li>
           <li><b>Statystyki klienta</b> pochodzą z bloku „Global video stats” na końcu streamu, więc dotyczą całego streamu, nie wybranego zakresu. Końcowy <i>Bitrate / Peak (10s)</i> to stan z ostatnich sekund, nie średnia. <i>Smoothness (2m)</i> to miara równości klatek przy VRR, nie liczba FPS.</li>
           <li><b>Diagnostyka</b> ocenia cały plik hosta (reguły silnika z analizatora sesji): brak klatek do wysłania, przeciążenie GPU/enkodera, utrata pakietów, nieregularne przerwy. Pole <span class="mono">verdict</span> z Vibepollo jest tylko informacyjne.</li>
+          <li><b>Pamięć:</b> wczytane pliki i ustawione zakresy są zapisywane w tej przeglądarce (IndexedDB) i wracają same po ponownym otwarciu strony. Są tylko na tym urządzeniu i w tej przeglądarce; nic nie trafia na serwer. „Wyczyść wszystko” albo „Usuń sesję z pamięci” je kasuje.</li>
           <li>Przy statycznym obrazie Vibepollo schodzi do ok. 16 FPS (keepalive), to nie awaria.</li>
         </ul>
       </details>
@@ -100,6 +102,7 @@
 <script src="js/engine/diagnostics.js"></script>
 <script src="js/engine/session.js"></script>
 <script src="js/storage.js"></script>
+<script src="js/store.js"></script>
 <script src="js/chart.js"></script>
 <script src="js/app.js"></script>
 </body>

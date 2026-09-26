@@ -13,37 +13,68 @@
   };
 
   // ---------- file intake ----------
+  // Parses one file into state. Returns { key, kind } when added, throws with a user-facing reason otherwise.
+  function ingest(n, text, msgs) {
+    if (/\.json$/i.test(n) || /^\s*[{[]/.test(text.slice(0, 50))) {
+      if (/^CapFrameX/i.test(n) || /"Runs"\s*:/.test(text.slice(0, 4000))) throw new Error('CapFrameX jeszcze nieobsługiwany');
+      const h = SS.parseVibepollo(n, text);
+      if (state.hosts.has(h.key)) throw new Error(`duplikat ${state.hosts.get(h.key).name}`);
+      state.hosts.set(h.key, h);
+      state.diag.set(h.key, SS.Diag.analyze(h, DIAG_OPTS));
+      if (h.truncated) msgs.push(`${n}: Vibepollo obciął próbki lub zdarzenia (samples_truncated).`);
+      return { key: 'h:' + h.key, kind: 'host' };
+    }
+    if (/(StreamLight|Moonlight)-\d+/i.test(n) || /SDL Info \(\d+\)|Global video stats/.test(text.slice(0, 200000))) {
+      const c = SS.parseClientLog(n, text);
+      if (state.logs.has(c.key)) throw new Error('duplikat');
+      if (!c.streams.length) throw new Error('brak streamu w logu');
+      if (c.epoch == null) msgs.push(`${n}: brak czasu uniksowego w nazwie pliku, nie da się go zsynchronizować z hostem.`);
+      state.logs.set(c.key, c);
+      return { key: 'c:' + c.key, kind: 'client' };
+    }
+    throw new Error('nieznany format');
+  }
+
   async function addFiles(list) {
     const msgs = [], skipped = [];
-    let added = 0;
+    let added = 0, unsaved = 0;
     for (const file of list) {
       const n = file.name;
       if (file.size > 80 * 1024 * 1024) { skipped.push(`${n}: za duży`); continue; }
       if (/\.csv$/i.test(n)) { skipped.push(`${n}: PresentMon/CSV jeszcze nieobsługiwany`); continue; }
       try {
         const text = await file.text();
-        if (/\.json$/i.test(n) || /^\s*[{[]/.test(text.slice(0, 50))) {
-          if (/^CapFrameX/i.test(n) || /"Runs"\s*:/.test(text.slice(0, 4000))) { skipped.push(`${n}: CapFrameX jeszcze nieobsługiwany`); continue; }
-          const h = SS.parseVibepollo(n, text);
-          if (state.hosts.has(h.key)) { skipped.push(`${n}: duplikat ${state.hosts.get(h.key).name}`); continue; }
-          state.hosts.set(h.key, h);
-          state.diag.set(h.key, SS.Diag.analyze(h, DIAG_OPTS));
-          if (h.truncated) msgs.push(`${n}: Vibepollo obciął próbki lub zdarzenia (samples_truncated).`);
-          added++;
-        } else if (/(StreamLight|Moonlight)-\d+/i.test(n) || /SDL Info \(\d+\)|Global video stats/.test(text.slice(0, 200000))) {
-          const c = SS.parseClientLog(n, text);
-          if (state.logs.has(c.key)) { skipped.push(`${n}: duplikat`); continue; }
-          if (c.epoch == null) msgs.push(`${n}: brak czasu uniksowego w nazwie pliku, nie da się go zsynchronizować z hostem.`);
-          if (!c.streams.length) { skipped.push(`${n}: brak streamu w logu`); continue; }
-          state.logs.set(c.key, c);
-          added++;
-        } else skipped.push(`${n}: nieznany format`);
+        const r = ingest(n, text, msgs);
+        added++;
+        try { await SS.Store.putFile({ key: r.key, kind: r.kind, name: n, text }); } catch (e) { unsaved++; }
       } catch (e) { skipped.push(`${n}: ${e.message}`); }
     }
+    if (unsaved) msgs.push(`Nie udało się zapisać ${unsaved} plików w pamięci przeglądarki; po zamknięciu strony trzeba je będzie wczytać ponownie.`);
     if (skipped.length) msgs.push('Pominięto: ' + skipped.join('; '));
     notice(msgs.join(' '), skipped.length && !added ? 'err' : '');
-    if (added) state.selected = null;
+    if (added) { state.selected = null; SS.Store.persist(); }
     rebuild();
+    storageInfo();
+  }
+
+  // Startup: bring back every file and range saved in earlier visits.
+  async function restore() {
+    let files = [], ranges = [];
+    try { [files, ranges] = await Promise.all([SS.Store.allFiles(), SS.Store.allRanges()]); }
+    catch (e) { notice('Pamięć przeglądarki jest niedostępna (np. tryb prywatny). Wczytane pliki nie zostaną zapamiętane.', 'err'); return; }
+    ranges.forEach(r => state.ranges.set(r.id, { a: r.a, b: r.b, trimMin: r.trimMin || 0 }));
+    const msgs = [];
+    files.sort((a, b) => a.savedAt - b.savedAt).forEach(f => { try { ingest(f.name, f.text, msgs); } catch (e) { /* stale duplicate etc. */ } });
+    if (files.length) rebuild();
+    storageInfo();
+  }
+
+  async function storageInfo() {
+    const el = $('#storeInfo'); if (!el) return;
+    const n = state.hosts.size + state.logs.size;
+    const u = await SS.Store.usage();
+    const word = n === 1 ? 'plik' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'pliki' : 'plików';
+    el.textContent = n ? `Zapamiętane w tej przeglądarce: ${n} ${word}${u && u.usage ? ` (${num(u.usage / 1048576, 1)} MB)` : ''}. Wczytają się same przy następnym otwarciu.` : '';
   }
 
   function notice(msg, kind) {
@@ -120,7 +151,23 @@
     Object.assign(r, patch);
     r.a = Math.max(s.t0 - 60, Math.min(r.a, s.t1));
     r.b = Math.max(r.a + 1, Math.min(r.b, s.t1 + 60));
+    SS.Store.putRange({ id: s.id, a: r.a, b: r.b, trimMin: r.trimMin || 0 }).catch(() => {});
     updateRangeViews();
+  }
+
+  // Forget one session: its host file plus client logs that pair with nothing else.
+  async function removeSession(s) {
+    if (!confirm(`Usunąć sesję „${s.app}” z ${date(s.t0)} z pamięci przeglądarki? Zapisane podsumowania w Historii zostaną.`)) return;
+    const keys = [];
+    if (s.host) { state.hosts.delete(s.host.key); state.diag.delete(s.host.key); keys.push('h:' + s.host.key); }
+    for (const log of new Set(s.clients.map(c => c.log))) {
+      const usedElsewhere = state.sessions.some(o => o !== s && o.clients.some(c => c.log === log));
+      if (!usedElsewhere) { state.logs.delete(log.key); keys.push('c:' + log.key); }
+    }
+    state.ranges.delete(s.id);
+    await Promise.all(keys.map(k => SS.Store.deleteFile(k).catch(() => {})));
+    state.selected = null;
+    rebuild(); storageInfo();
   }
 
   // ---------- detail ----------
@@ -146,6 +193,7 @@
             <h2 id="dTitle">${esc(s.app)}${h ? ` <span class="muted" style="font-weight:500">· ${esc(h.client)}</span>` : ''}</h2>
             <div class="chips">${chips.map(c => `<span class="chip">${esc(c)}</span>`).join('')}${syncChip}</div>
           </div>
+          <button class="small" type="button" id="removeBtn">Usuń sesję z pamięci</button>
         </div>
         ${h && h.segs.length > 1 ? segTable(s) : ''}
       </section>
@@ -191,6 +239,7 @@
       const m = s.markers[+b.dataset.mk];
       setRange(s, b.dataset.as === 'start' ? { a: m.u } : { b: m.u, trimMin: 0 });
     }));
+    $('#removeBtn').addEventListener('click', () => removeSession(s));
     $('#saveBtn').addEventListener('click', () => {
       const ok = SS.History.add(buildSummary(s));
       actMsg(ok ? 'Zapisano w historii tej przeglądarki.' : 'Zapisano tylko do zamknięcia karty: przeglądarka blokuje pamięć lokalną.');
@@ -484,8 +533,11 @@
   document.addEventListener('drop', e => e.preventDefault());
   $('#files').addEventListener('change', e => { addFiles([...e.target.files]); e.target.value = ''; });
   $('#pickBtn').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#files').click(); } });
-  $('#clearBtn').addEventListener('click', () => {
-    state.hosts.clear(); state.logs.clear(); state.diag.clear(); state.ranges.clear(); state.selected = null; notice(''); rebuild();
+  $('#clearBtn').addEventListener('click', async () => {
+    if (!state.hosts.size && !state.logs.size) return;
+    if (!confirm('Usunąć wszystkie wczytane pliki z pamięci tej przeglądarki? Zapisane podsumowania w Historii zostaną.')) return;
+    await SS.Store.clearAll().catch(() => {});
+    state.hosts.clear(); state.logs.clear(); state.diag.clear(); state.ranges.clear(); state.selected = null; notice(''); rebuild(); storageInfo();
   });
 
   $('#compareBtn').addEventListener('click', () => { renderCompare(); $('#comparePanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
@@ -507,4 +559,5 @@
   SS.app = { addFiles, state, effRange, setRange, current };
   rebuild();
   renderHistory();
+  restore();
 })();
