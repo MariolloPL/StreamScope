@@ -91,6 +91,72 @@ SS.parseSteamLog = function (name, text) {
   return { kind: 'steam', name, key: name, conns: real, zoneFromLog: shift != null };
 };
 
+// Whole-connection diagnostics for Steam Remote Play. Deterministic rules on what Steam actually logs;
+// thresholds assume a wired LAN like the user's (ping ~1–3 ms). Same {sev,title,text} shape as SS.Diag findings.
+SS.steamDiag = function (conn) {
+  const f = [];
+  const segs = conn.segments.filter(s => s.dur > 0);
+  const game = segs.filter(s => s.source === 'gra');
+  const all = SS.steamSummary(segs);
+  const g = game.length ? SS.steamSummary(game) : null;
+  const fmt = (v, d = 1) => v == null ? '—' : v.toFixed(d).replace('.', ',');
+  const scope = g ? g : all;
+  const scopeName = g ? 'w odcinkach gry' : 'w całej sesji';
+
+  if (!game.length) f.push({ sev: 'info', title: 'Brak przechwytywania gry', text: 'Wszystkie odcinki to pulpit/menu. Statystyki FPS i wąskich gardeł dotyczą nawigacji, nie rozgrywki.' });
+
+  // Bottlenecks: Steam's own "slow" percentages, i.e. share of time a stage held the frame rate back.
+  const WHERE = {
+    game: ['gra', 'Gra renderuje mniej klatek niż limit streamu (ustawienia grafiki, CPU/GPU hosta albo menu/ładowanie).'],
+    capture: ['przechwytywanie', 'Host nie nadąża z przechwytywaniem obrazu.'],
+    convert: ['konwersja', 'Host nie nadąża z konwersją kolorów przed enkodowaniem.'],
+    encode: ['enkodowanie', 'Enkoder na hoście jest wąskim gardłem; pomaga niższy bitrate lub rozdzielczość.'],
+    network: ['sieć', 'Transfer klatek przez sieć spowalnia stream. Przy bardzo wysokim bitrate PyroWave dane zaczynają się kolejkować.'],
+    decode: ['dekodowanie', 'Klient nie nadąża z dekodowaniem.'],
+    display: ['wyświetlanie', 'Klient czeka na wyświetlenie klatki (V-sync / odświeżanie ekranu klienta).']
+  };
+  for (const [k, v] of Object.entries(scope.slow)) {
+    if (v == null || v < 2) continue;
+    // Without game capture this is desktop/menu time, where a static picture legitimately stalls the pipeline.
+    f.push({ sev: v >= 10 && game.length ? 'crit' : 'warn', title: `Wąskie gardło: ${WHERE[k][0]}`, text: `${fmt(v)}% czasu ${scopeName}. ${WHERE[k][1]}${game.length ? '' : ' Na pulpicie i w menu bywa to normalne.'}` });
+  }
+
+  // Frame rate vs the stream's limit, game capture only (menus legitimately idle).
+  const limit = (game[game.length - 1] || segs[segs.length - 1] || {}).fpsLimit;
+  if (g && limit && g.fps != null && g.fps < 0.8 * limit) {
+    f.push({ sev: g.fps < 0.6 * limit ? 'crit' : 'warn', title: 'FPS streamu poniżej limitu', text: `Średnio ${fmt(g.fps)} FPS przy limicie ${limit} w odcinkach gry (${fmt(g.fps / limit * 100, 0)}%). AvgFPS Steama to kadencja streamu; sprawdź, czy sama gra osiąga wyższy FPS.` });
+  }
+
+  if (scope.pingMs != null && scope.pingMs > 5) f.push({ sev: scope.pingMs > 15 ? 'crit' : 'warn', title: 'Wysoki ping', text: `Średnio ${fmt(scope.pingMs, 2)} ms ${scopeName}. Na przewodowym LAN typowo 1–3 ms; sprawdź Wi-Fi, obciążenie sieci albo tryb oszczędzania energii karty sieciowej.` });
+  if (scope.networkMs != null && scope.networkMs > 10) f.push({ sev: 'warn', title: 'Długi transfer klatki', text: `Średnio ${fmt(scope.networkMs, 2)} ms na przesłanie klatki. Przy wysokim bitrate klatki są większe i dłużej płyną przez sieć.` });
+
+  // High bitrate close to the measured link: queueing risk (spec: 750 Mb/s PyroWave added ~11 ms queue).
+  if (scope.serverMbps != null && scope.linkMbps) {
+    const r = scope.serverMbps / scope.linkMbps;
+    if (r >= 0.6) f.push({ sev: r >= 0.85 ? 'crit' : 'warn', title: 'Bitrate blisko przepustowości łącza', text: `Średnio ${fmt(scope.serverMbps, 0)} Mb/s przy zmierzonym łączu ${fmt(scope.linkMbps, 0)} Mb/s (${fmt(r * 100, 0)}%). Grozi kolejkowaniem i skokami opóźnienia; niższy limit bitrate może dać płynniejszy obraz.` });
+  }
+
+  const res = [...new Set(game.filter(s => s.width).map(s => `${s.width}×${s.height}`))];
+  if (res.length > 1) f.push({ sev: 'info', title: 'Zmiana rozdzielczości w trakcie gry', text: `Steam przełączał rozdzielczość streamu: ${res.join(' → ')}. Zwykle to automatyczne dopasowanie do wydajności lub łącza; porównuj odcinki o tej samej rozdzielczości.` });
+
+  const rates = [...new Set(conn.bitrates.map(b => b.kbps))];
+  if (rates.length > 1) f.push({ sev: 'info', title: 'Zmiana docelowego bitrate', text: `Steam ustawiał kolejno: ${rates.map(k => fmt(k / 1000, 0) + ' Mb/s').join(' → ')}. Pierwsza wartość to zwykle start połączenia przed zastosowaniem Twojego limitu.` });
+
+  const gameSlow = conn.slow.filter(e => game.some(s => e.u > s.u0 && e.u <= s.u1));
+  const gameMin = (g ? g.dur : 0) / 60;
+  if (gameSlow.length && gameMin > 0) {
+    const causes = {};
+    gameSlow.forEach(e => e.causes.forEach(c => { causes[c] = (causes[c] || 0) + 1; }));
+    const top = Object.entries(causes).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, n]) => `${(WHERE[k] || [k])[0]} (${n}×)`).join(', ');
+    const perMin = gameSlow.length / gameMin;
+    f.push({ sev: perMin >= 1 ? 'warn' : 'info', title: 'Zdarzenia „Slow framerate” w grze', text: `${gameSlow.length} w ${fmt(gameMin, 0)} min gry${top ? `, najczęściej: ${top}` : ''}.` });
+  }
+
+  let status = 'ok';
+  if (f.some(x => x.sev === 'crit')) status = 'crit'; else if (f.some(x => x.sev === 'warn')) status = 'warn';
+  return { status, findings: f };
+};
+
 // Duration-weighted summary of chosen Steam segments (Steam gives per-segment averages, not samples).
 SS.steamSummary = function (segs) {
   const use = segs.filter(s => s.dur > 0);

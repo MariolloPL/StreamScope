@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="css/app.css?v=202609261049">
+<link rel="stylesheet" href="css/app.css?v=202609261056">
 </head>
 <body>
 <div class="wrap">
@@ -44,13 +44,19 @@
     <div id="notice" class="notice" hidden></div>
 
     <section class="panel" aria-labelledby="sessTitle">
-      <div class="panel-head"><h2 id="sessTitle">Sesje</h2><span class="muted small" id="sessCount"></span></div>
-      <div class="tablewrap">
-        <table>
-          <thead><tr><th>Diagnostyka</th><th>Aplikacja</th><th>Start</th><th class="num">Czas</th><th>Tryb</th><th>Klient</th><th class="num">FPS typowe</th><th>Znaleziska</th></tr></thead>
-          <tbody id="sessBody"></tbody>
-        </table>
+      <div class="panel-head">
+        <h2 id="sessTitle">Sesje</h2>
+        <div class="seg" role="group" aria-label="Filtr sesji" id="sessFilter">
+          <button type="button" data-f="all">Wszystkie</button>
+          <button type="button" data-f="sunshine">Vibepollo / Moonlight</button>
+          <button type="button" data-f="steam">Steam</button>
+        </div>
       </div>
+      <span class="muted small" id="sessCount"></span>
+      <table class="sessions">
+        <thead><tr><th>Ocena</th><th>Aplikacja · tryb</th><th>Start · czas</th><th>Klient</th><th class="num">FPS typowe</th><th>Znaleziska</th></tr></thead>
+        <tbody id="sessBody"></tbody>
+      </table>
     </section>
 
     <section id="detail" style="display:grid;gap:18px" aria-live="polite"></section>
@@ -97,15 +103,15 @@
   </main>
 </div>
 
-<script src="js/core.js?v=202609261049"></script>
-<script src="js/parsers/vibepollo.js?v=202609261049"></script>
-<script src="js/parsers/clientlog.js?v=202609261049"></script>
-<script src="js/parsers/steamlog.js?v=202609261049"></script>
-<script src="js/engine/diagnostics.js?v=202609261049"></script>
-<script src="js/engine/session.js?v=202609261049"></script>
-<script src="js/storage.js?v=202609261049"></script>
-<script src="js/store.js?v=202609261049"></script>
-<script src="js/chart.js?v=202609261049"></script>
-<script src="js/app.js?v=202609261049"></script>
+<script src="js/core.js?v=202609261056"></script>
+<script src="js/parsers/vibepollo.js?v=202609261056"></script>
+<script src="js/parsers/clientlog.js?v=202609261056"></script>
+<script src="js/parsers/steamlog.js?v=202609261056"></script>
+<script src="js/engine/diagnostics.js?v=202609261056"></script>
+<script src="js/engine/session.js?v=202609261056"></script>
+<script src="js/storage.js?v=202609261056"></script>
+<script src="js/store.js?v=202609261056"></script>
+<script src="js/chart.js?v=202609261056"></script>
+<script src="js/app.js?v=202609261056"></script>
 </body>
 </html>

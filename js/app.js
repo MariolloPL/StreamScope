@@ -15,7 +15,8 @@
 
   const state = {
     hosts: new Map(), logs: new Map(), diag: new Map(), steam: new Map(), steamSel: new Map(), hidden: new Set(),
-    sessions: [], selected: null, ranges: new Map(), timeBase: 'client', compare: new Set()
+    sessions: [], selected: null, ranges: new Map(), timeBase: 'client', compare: new Set(),
+    filter: (() => { try { return localStorage.getItem('streamscope.filter') || 'all'; } catch (e) { return 'all'; } })()
   };
 
   // ---------- file intake ----------
@@ -107,7 +108,7 @@
       const id = 's:' + c.key;
       // The same connection can appear in streaming_log.txt and .previous.txt; keep the more complete copy.
       if (!steamById.has(id) || steamById.get(id).steam.segments.length < c.segments.length) {
-        steamById.set(id, { id, steam: c, file: f, host: null, clients: [], markers: [], events: [], log: null, clientBase: null, offset: 0, t0: c.u0, t1: c.u1, app: c.game });
+        steamById.set(id, { id, steam: c, sdiag: SS.steamDiag(c), file: f, host: null, clients: [], markers: [], events: [], log: null, clientBase: null, offset: 0, t0: c.u0, t1: c.u1, app: c.game });
       }
     }
     state.sessions = SS.Session.build([...state.hosts.values()], [...state.logs.values()])
@@ -144,28 +145,41 @@
     const off = s.host && s.log ? ` <span class="muted small">(${s.offset >= 0 ? '+' : ''}${num(s.offset, 1)} s)</span>` : '';
     return `${esc(names)}${n}${off}`;
   }
+  const plural = (n, one, few, many) => n === 1 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many;
+  const kindOf = s => s.steam ? 'steam' : 'sunshine';
+  const shortDate = u => new Date(u * 1000).toLocaleString('pl-PL', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', '');
   function renderSessions() {
     const body = $('#sessBody');
-    const S = state.sessions;
-    $('#sessCount').textContent = S.length ? `${S.length} ${S.length === 1 ? 'sesja' : S.length % 10 >= 2 && S.length % 10 <= 4 && (S.length % 100 < 10 || S.length % 100 >= 20) ? 'sesje' : 'sesji'} · ${state.hosts.size} plików hosta · ${state.logs.size} logów klienta${state.steam.size ? ` · ${state.steam.size} logów Steama` : ''}` : '';
-    if (!S.length) { body.innerHTML = `<tr><td colspan="8" class="empty">Brak plików. Przeciągnij pliki powyżej.</td></tr>`; return; }
+    const all = state.sessions;
+    const counts = { all: all.length, sunshine: all.filter(s => kindOf(s) === 'sunshine').length, steam: all.filter(s => s.steam).length };
+    if (!counts[state.filter]) state.filter = 'all';
+    document.querySelectorAll('#sessFilter [data-f]').forEach(b => {
+      const f = b.dataset.f;
+      b.setAttribute('aria-pressed', f === state.filter);
+      b.textContent = `${{ all: 'Wszystkie', sunshine: 'Vibepollo / Moonlight', steam: 'Steam' }[f]} (${counts[f]})`;
+      b.disabled = !counts[f];
+    });
+    const S = state.filter === 'all' ? all : all.filter(s => kindOf(s) === state.filter);
+    $('#sessCount').textContent = all.length ? `${state.hosts.size} ${plural(state.hosts.size, 'plik', 'pliki', 'plików')} Vibepollo · ${state.logs.size} ${plural(state.logs.size, 'log', 'logi', 'logów')} klienta${state.steam.size ? ` · ${state.steam.size} ${plural(state.steam.size, 'log', 'logi', 'logów')} Steama` : ''}` : '';
+    if (!S.length) { body.innerHTML = `<tr><td colspan="6" class="empty">Brak plików. Przeciągnij pliki powyżej.</td></tr>`; return; }
+    const row = (s, pill, fps, tags) => `<tr class="pick${s.id === state.selected ? ' sel' : ''}" data-id="${esc(s.id)}" tabindex="0">
+        <td>${pill}</td>
+        <td><div class="app">${esc(s.app)}</div><div class="mono small muted">${esc(modeOf(s))}</div></td>
+        <td class="mono"><div style="white-space:nowrap">${shortDate(s.t0)}</div><div class="small muted">${tfmt(s.t1 - s.t0)}</div></td>
+        <td>${clientCell(s)}</td>
+        <td class="num">${fps}</td>
+        <td class="small tags">${esc(tags)}</td></tr>`;
     body.innerHTML = S.map(s => {
       if (s.steam) {
         const sum = SS.steamSummary(steamSegs(s));
-        return `<tr class="pick${s.id === state.selected ? ' sel' : ''}" data-id="${esc(s.id)}" tabindex="0">
-          <td><span class="pill raw">Steam</span></td>
-          <td class="app">${esc(s.app)}</td><td class="num">${date(s.t0)}</td><td class="num">${tfmt(s.t1 - s.t0)}</td>
-          <td class="mono small">${esc(modeOf(s))}</td><td>${clientCell(s)}</td><td class="num">${num(sum.fps, 0)} <span class="muted small">(Steam)</span></td>
-          <td class="wrap small">${esc(steamBottlenecks(sum) || 'brak wąskich gardeł > 1%')}</td></tr>`;
+        const sd = s.sdiag;
+        const tags = sd.findings.filter(x => x.sev !== 'info').map(x => x.title).join(' · ') || 'brak';
+        return row(s, `<span class="pill ${sd.status}">Steam · ${statusLabel[sd.status]}</span>`, `${num(sum.fps, 0)}`, tags);
       }
       const d = diagOf(s);
       const tags = d ? d.findings.filter(f => f.sev !== 'info').map(f => f.title).join(' · ') || 'brak' : '';
-      const fps = d ? `${num(d.stats.baseline, 0)} / ${s.host.target}` : (s.clients[0].stream.stats ? `${num(s.clients[0].stream.stats.incoming, 0)} (klient)` : '—');
-      return `<tr class="pick${s.id === state.selected ? ' sel' : ''}" data-id="${esc(s.id)}" tabindex="0">
-        <td>${d ? `<span class="pill ${d.status}">${statusLabel[d.status]}</span>` : '<span class="pill raw">bez hosta</span>'}</td>
-        <td class="app">${esc(s.app)}</td><td class="num">${date(s.t0)}</td><td class="num">${tfmt(s.t1 - s.t0)}</td>
-        <td class="mono small">${esc(modeOf(s))}</td><td>${clientCell(s)}</td><td class="num">${fps}</td>
-        <td class="wrap small">${esc(tags)}</td></tr>`;
+      const fps = d ? `${num(d.stats.baseline, 0)} <span class="muted small">/ ${s.host.target}</span>` : (s.clients[0].stream.stats ? `${num(s.clients[0].stream.stats.incoming, 0)} <span class="muted small">klient</span>` : '—');
+      return row(s, d ? `<span class="pill ${d.status}">${statusLabel[d.status]}</span>` : '<span class="pill raw">bez hosta</span>', fps, tags);
     }).join('');
     body.querySelectorAll('tr.pick').forEach(tr => {
       const pick = () => { state.selected = tr.dataset.id; renderSessions(); renderDetail(); $('#detail').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
@@ -292,6 +306,13 @@
         </div>` : '<p class="muted">Zaznacz przynajmniej jeden odcinek.</p>'}
         <p class="caveat">AvgFPS Steama to metryka streamu, nie FPS gry, a menu i ekrany ładowania go zaniżają. Przy PyroWave w przechwytywaniu gry Steam raportuje 0 ms dla przechwytywania, konwersji i enkodowania; takie zera są traktowane jako „nie mierzone”.</p>
       </section>
+      <section class="panel" aria-labelledby="sdTitle">
+        <div class="panel-head"><h2 id="sdTitle">Diagnostyka całej sesji</h2>
+          <div class="actions"><span class="muted small">Analiza:</span><span class="pill ${s.sdiag.status}">${statusLabel[s.sdiag.status]}</span></div></div>
+        <div class="findings">${(s.sdiag.findings.length ? s.sdiag.findings : [{ sev: 'ok', title: 'Nic nie wymaga uwagi', text: 'Brak istotnych wąskich gardeł, FPS blisko limitu, ping i bitrate w normie.' }])
+          .map(x => `<div class="finding ${x.sev}"><span class="bar"></span><div><h3>${esc(x.title)}</h3><p>${esc(x.text)}</p></div></div>`).join('')}</div>
+        <p class="caveat">Ocena obejmuje wszystkie odcinki połączenia (wąskie gardła, FPS i sieć liczone z odcinków gry, jeśli są), niezależnie od zaznaczenia powyżej.</p>
+      </section>
       ${slowTimes.length ? `<section class="panel"><details><summary>Zdarzenia „Slow framerate” (${slowTimes.length})</summary><div class="tablewrap"><table>
         <thead><tr><th class="num">Godzina</th><th>Przyczyna</th><th class="num">Gra</th><th class="num">Przechw.</th><th class="num">Konw.</th><th class="num">Enk.</th><th class="num">Sieć</th><th class="num">Dekod.</th><th class="num">Wyśw.</th></tr></thead>
         <tbody>${slowTimes.map(e => `<tr><td class="num">${clock(e.u)}</td><td>${esc(e.causes.map(k => SLOW_LABEL[k] || k).join(', ') || '—')}</td>${['game', 'capture', 'convert', 'encode', 'network', 'decode', 'display'].map(k => `<td class="num">${e[k] == null || Math.abs(e[k]) > 10000 ? '—' : num(e[k], 1)}</td>`).join('')}</tr>`).join('')}</tbody>
@@ -313,7 +334,7 @@
       renderSteamDetail(el, s); renderSessions();
     }));
     $('#removeBtn').addEventListener('click', () => removeSession(s));
-    const summary = () => SS.Report.steamSummary(s, steamSegs(s), SS.steamSummary(steamSegs(s)));
+    const summary = () => SS.Report.steamSummary(s, steamSegs(s), SS.steamSummary(steamSegs(s)), s.sdiag);
     $('#saveBtn').addEventListener('click', () => {
       const ok = SS.History.add(summary());
       actMsg(ok ? 'Zapisano w historii tej przeglądarki.' : 'Zapisano tylko do zamknięcia karty: przeglądarka blokuje pamięć lokalną.');
@@ -687,6 +708,17 @@
     if (hist) renderHistory();
     else { const s = current(); if (s) updateRangeViews(); }
   }
+  document.querySelectorAll('#sessFilter [data-f]').forEach(b => b.addEventListener('click', () => {
+    state.filter = b.dataset.f;
+    try { localStorage.setItem('streamscope.filter', state.filter); } catch (e) { /* per-viewer convenience only */ }
+    const cur = current();
+    if (state.filter !== 'all' && (!cur || kindOf(cur) !== state.filter)) {
+      const first = state.sessions.find(s => kindOf(s) === state.filter);
+      state.selected = first ? first.id : state.selected;
+      renderDetail();
+    }
+    renderSessions();
+  }));
   $('#tabAnalyze').addEventListener('click', () => showTab('analyze'));
   $('#tabHistory').addEventListener('click', () => showTab('history'));
 

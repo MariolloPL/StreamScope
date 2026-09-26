@@ -75,7 +75,7 @@ SS.Report = (() => {
   }
 
   // Steam Remote Play: shared fields mirror the Vibepollo/StreamLight summary so Compare can line them up.
-  function steamSummary(session, segs, sum) {
+  function steamSummary(session, segs, sum, diag) {
     const c = session.steam, last = segs[segs.length - 1] || c.segments[c.segments.length - 1], mc = c.maxCapture;
     const enc = (last.encoder || '').replace(/\s*\[.*\]$/, '');
     return {
@@ -107,7 +107,8 @@ SS.Report = (() => {
         display_ms: r2(sum.displayMs), server_bitrate_mbps: r2(sum.serverMbps), link_mbps: r2(sum.linkMbps),
         slow_pct: Object.fromEntries(Object.entries(sum.slow).map(([k, v]) => [k, r2(v)]))
       },
-      client_events: null, diagnostics: null
+      client_events: null,
+      diagnostics: diag ? { status: diag.status, findings: diag.findings.filter(f => f.sev !== 'info').map(f => f.title) } : null
     };
   }
 
@@ -161,7 +162,7 @@ SS.Report = (() => {
     }
     const e = sum.client_events;
     if (e && (e.rfi || e.idr || e.overflow)) L.push(`Client events in range: RFI ${e.rfi}, IDR ${e.idr}, decode queue overflow ${e.overflow}`);
-    if (sum.diagnostics) L.push('', `Diagnostics (whole host file): ${sum.diagnostics.status}${sum.diagnostics.findings.length ? ' — ' + sum.diagnostics.findings.join('; ') : ''}`);
+    if (sum.diagnostics) L.push('', `Diagnostics (${sum.steam ? 'whole Steam connection' : 'whole host file'}): ${sum.diagnostics.status}${sum.diagnostics.findings.length ? ' — ' + sum.diagnostics.findings.join('; ') : ''}`);
     L.push('', 'JSON:', JSON.stringify(sum));
     return L.join('\n');
   }
