@@ -36,6 +36,10 @@ Wystarczy otworzyć `index.html` w przeglądarce, bez budowania. Można też uru
 python -m http.server 8765
 ```
 
+## Wydanie nowej wersji
+
+Przed commitem uruchom `sh scripts/bump-version.sh`. Skrypt dopisuje świeży `?v=` do adresów skryptów i stylów w `index.html`. GitHub Pages każe przeglądarkom trzymać pliki do 10 minut, a bez nowego `?v=` nowa strona mogłaby działać ze starymi skryptami. Wersja jest widoczna w nagłówku strony.
+
 ## Struktura
 
 ```

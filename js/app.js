@@ -1,6 +1,12 @@
 // StreamScope UI: file intake → sessions table → session detail (range, markers, charts, benchmark,
 // client stats, diagnostics) → history & compare.
 (() => {
+  // Version = the ?v= stamp on this script tag (bumped on every release), shown so stale caches are easy to spot.
+  {
+    const v = ((document.currentScript && document.currentScript.src.match(/[?&]v=(\d+)/)) || [])[1];
+    const el = document.getElementById('appVersion');
+    if (el && v) el.textContent = 'wersja ' + v.replace(/^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)$/, '$1-$2-$3 $4:$5');
+  }
   const $ = s => document.querySelector(s);
   const { fmt: tfmt, parse: tparse, clock, date } = SS.time;
   const { num, esc } = SS.fmt;
@@ -59,7 +65,7 @@
       } catch (e) { skipped.push(`${n}: ${e.message}`); }
     }
     if (unsaved) msgs.push(`Nie udało się zapisać ${unsaved} plików w pamięci przeglądarki; po zamknięciu strony trzeba je będzie wczytać ponownie.`);
-    const head = `Dodano ${added} z ${list.length} plików.${skipped.length ? ` Pominięto ${skipped.length}:` : ''}`;
+    const head = `Dodano ${added} z ${list.length} ${list.length === 1 ? 'pliku' : 'plików'}.${skipped.length ? ` Pominięto ${skipped.length}:` : ''}`;
     notice([head, ...skipped.map(x => '• ' + x), ...msgs].join('\n'), skipped.length && !added ? 'err' : added ? 'ok' : '');
     if (added) { state.selected = null; SS.Store.persist(); }
     rebuild();
