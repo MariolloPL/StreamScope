@@ -63,8 +63,14 @@ SS.Session = (() => {
   }
   const c0Label = s => `${s.clients[0].log.client} (bez pliku hosta)`;
 
-  // Longest uuid segment is the sensible default range (spec: the short one is usually a settings reconnect).
+  // Default range: the longest automatically detected gameplay stretch (menus and loading excluded);
+  // without one, the longest uuid segment (the short one is usually a settings reconnect).
   function defaultRange(s) {
+    const gp = s.host && s.host.gameplay;
+    if (gp && gp.length) {
+      const g = [...gp].sort((x, y) => y.dur - x.dur)[0];
+      return { a: g.a, b: g.b };
+    }
     if (s.host && s.host.segs.length) {
       const g = [...s.host.segs].sort((a, b) => (b.t1 - b.t0) - (a.t1 - a.t0))[0];
       return { a: g.t0, b: g.t1 };

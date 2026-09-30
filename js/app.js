@@ -29,6 +29,7 @@
       if (/^CapFrameX/i.test(n) || /"Runs"\s*:/.test(text.slice(0, 4000))) throw new Error('CapFrameX jeszcze nieobsługiwany');
       const h = SS.parseVibepollo(n, text);
       if (state.hosts.has(h.key)) throw new Error(`duplikat ${state.hosts.get(h.key).name}`);
+      h.gameplay = SS.Gameplay.detect(h);
       state.hosts.set(h.key, h);
       state.diag.set(h.key, SS.Diag.analyze(h, DIAG_OPTS));
       if (h.truncated) msgs.push(`${n}: Vibepollo obciął próbki lub zdarzenia (samples_truncated).`);
@@ -454,6 +455,7 @@
           </div>
         </div>
         <div id="dRange"></div>
+        ${gameplayList(s)}
         ${markerTable(s)}
       </section>
       <section class="panel" aria-labelledby="cTitle">
@@ -461,7 +463,7 @@
         ${h ? `<div class="legend">
           <span><i style="background:var(--s-fps)"></i>FPS (actual_fps)</span><span><i style="background:var(--s-br)"></i>Bitrate</span><span><i style="background:var(--s-enc)"></i>Enkodowanie / enkoder GPU</span><span><i style="background:var(--s-cpu)"></i>CPU hosta</span><span><i style="background:var(--s-gpu)"></i>GPU hosta</span>
           <span><i style="background:var(--mk-off)"></i>pad OFF</span><span><i style="background:var(--mk-on)"></i>pad ON</span><span><i style="background:var(--warn)"></i>RFI (klient)</span><span><i style="background:var(--crit)"></i>IDR / przepełnienie</span>
-          <span><i class="box" style="background:var(--shade-crit)"></i>brak klatek</span><span><i class="box" style="background:var(--shade-warn)"></i>przeciążenie GPU</span><span><i class="box" style="background:var(--dim)"></i>poza zakresem</span>
+          <span><i class="box" style="background:var(--shade-crit)"></i>brak klatek</span><span><i class="box" style="background:var(--shade-warn)"></i>przeciążenie GPU</span><span><i class="box" style="background:var(--dim)"></i>poza zakresem</span><span><i style="background:var(--ok);height:5px"></i>wykryta rozgrywka</span>
         </div><div class="chart" id="dChart"></div>` : `<p class="muted">Wykresy wymagają pliku sesji Vibepollo z tego samego czasu.</p>`}
       </section>
       <section class="panel" aria-labelledby="bTitle">
@@ -483,6 +485,9 @@
     el.querySelectorAll('[data-base]').forEach(b => b.addEventListener('click', () => { state.timeBase = b.dataset.base; renderDetail(); }));
     el.querySelectorAll('[data-seg]').forEach(b => b.addEventListener('click', () => {
       const g = h.segs[+b.dataset.seg]; setRange(s, { a: g.t0, b: g.t1 });
+    }));
+    el.querySelectorAll('[data-gp]').forEach(b => b.addEventListener('click', () => {
+      const g = h.gameplay[+b.dataset.gp]; setRange(s, { a: g.a, b: g.b, trimMin: 0 });
     }));
     el.querySelectorAll('[data-mk]').forEach(b => b.addEventListener('click', () => {
       const m = s.markers[+b.dataset.mk];
@@ -511,6 +516,22 @@
         <td><button class="small" type="button" data-seg="${i}">Ustaw jako zakres</button></td></tr>`).join('')}</tbody></table></div></details>`;
   }
 
+  function gameplayList(s) {
+    const gp = (s.host && s.host.gameplay) || [];
+    if (!s.host) return '';
+    if (!gp.length) return `<p class="muted small">Nie wykryto fragmentów rozgrywki (wysokie obciążenie CPU, stabilny FPS i bitrate przez min. 3 minuty). Ustaw zakres ręcznie albo markerami.</p>`;
+    return `<div style="display:grid;gap:6px">
+      <h3>Wykryta rozgrywka <span class="muted small" style="font-weight:400">automatycznie, bez markerów</span></h3>
+      <div class="tablewrap"><table>
+        <thead><tr><th class="num">Od</th><th class="num">Do</th><th class="num">Długość</th><th class="num">Godziny</th><th></th></tr></thead>
+        <tbody>${gp.map((g, i) => `<tr><td class="num">${fmtU(s, g.a)}</td><td class="num">${fmtU(s, g.b)}</td><td class="num">${tfmt(g.dur)}</td>
+          <td class="num muted">${clock(g.a)}–${clock(g.b)}</td>
+          <td><button class="small" type="button" data-gp="${i}">Ustaw jako zakres</button></td></tr>`).join('')}</tbody>
+      </table></div>
+      <p class="caveat">Rozpoznane po wysokim obciążeniu CPU, stabilnym FPS i stałym bitrate (progi liczone osobno dla każdego połączenia). Granice mają dokładność ok. ±1 min; markery pada i ręczny zakres dalej działają.</p>
+    </div>`;
+  }
+
   function markerTable(s) {
     if (!s.markers.length) {
       return `<p class="muted small">Brak markerów.${s.clients.length ? ' Wyłącz i włącz pad podłączony do klienta na początku i na końcu rozgrywki, a pojawią się tutaj.' : ' Dodaj log klienta z tej sesji, żeby zobaczyć markery pada.'}</p>`;
@@ -534,7 +555,7 @@
         <label class="field">Koniec<input class="t" id="rEnd" value="${fmtU(s, r.b)}" placeholder="np. 1:00:04" inputmode="numeric"></label>
         <label class="field">Przytnij koniec o (min)<input class="t" id="rTrim" value="${r.trimMin || 0}" inputmode="decimal" style="width:70px"></label>
         <div class="readout">→ ${fmtU(s, e.a)} – ${fmtU(s, e.b)} <span class="muted">(${tfmt(e.b - e.a)})</span></div>
-        <button type="button" id="rLongest">Najdłuższe połączenie</button>
+        <button type="button" id="rLongest">${s.host && s.host.gameplay && s.host.gameplay.length ? 'Najdłuższa rozgrywka' : 'Najdłuższe połączenie'}</button>
         <button type="button" id="rAll">Cała sesja</button>
       </div>
       <p class="caveat" style="margin-top:8px">Czas w polach: ${esc(baseName(s))} (godz.: ${clock(e.a)} – ${clock(e.b)}). Wpisz np. <span class="mono">28:17</span> albo <span class="mono">1:00:04</span>; sama liczba to minuty.</p>`;
@@ -565,6 +586,7 @@
     }
     SS.Chart.draw(el, {
       host: h, t0: s.t0, t1: s.t1, range: e, markers: s.markers, events: s.events, episodes: epi, segs: h.segs,
+      bands: (h.gameplay || []).map(g => ({ a: g.a, b: g.b, fill: 'var(--ok)' })),
       fmtAxis: u => fmtU(s, u), axisBase: base0(s),
       panels: [
         { label: 'FPS', h: 150, minMax: h.target || 60, series: [{ get: x => x.actual_fps, c: 'var(--s-fps)', w: 1.6 }], refLines: [{ v: h.target, c: 'var(--muted)' }] },
