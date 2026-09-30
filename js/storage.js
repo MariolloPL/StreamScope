@@ -147,6 +147,10 @@ SS.Report = (() => {
     L.push(`Mode: ${sum.resolution || '?'} @${sum.target_fps || '?'} ${sum.codec || ''}${sum.bitrate_setting_mbps ? `, ${n(sum.bitrate_setting_mbps, 0)} Mbps` : ''}`);
     L.push(`Date: ${SS.time.date(sum.date)}`);
     L.push(`Range: ${sum.range} (${SS.time.fmt(sum.duration_s)})`);
+    if (sum.scores && sum.scores.overall != null) {
+      const sc = sum.scores, names = { fps: 'FPS', stability: 'stability', latency: 'latency', network: 'network', image: 'image', headroom: 'host headroom (info)' };
+      L.push(`Scores 1-10 (StreamScope): overall ${n(sc.overall)} · ` + Object.keys(names).filter(k => k in sc).map(k => `${names[k]} ${sc[k] == null ? 'n/a' : n(sc[k])}`).join(' · '));
+    }
     if (sum.steam) {
       const s = sum.steam, sl = s.slow_pct || {};
       L.push('', `Steam Remote Play → ${s.client} (duration-weighted segment averages; Steam AvgFPS is stream cadence, not game FPS):`);

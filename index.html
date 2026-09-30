@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="css/app.css?v=202609261224">
+<link rel="stylesheet" href="css/app.css?v=202609301851">
 </head>
 <body>
 <div class="wrap">
@@ -54,7 +54,7 @@
       </div>
       <span class="muted small" id="sessCount"></span>
       <table class="sessions">
-        <thead><tr><th>Ocena</th><th>Aplikacja · tryb</th><th>Start · czas</th><th>Klient</th><th class="num">FPS typowe</th><th>Znaleziska</th></tr></thead>
+        <thead><tr><th>Diagnostyka</th><th class="num" title="Ocena ogólna 1–10 dla wybranego zakresu">Wynik</th><th>Aplikacja · tryb</th><th>Start · czas</th><th>Klient</th><th class="num">FPS typowe</th><th>Znaleziska</th></tr></thead>
         <tbody id="sessBody"></tbody>
       </table>
     </section>
@@ -95,7 +95,7 @@
       <p class="caveat">Historia jest zapisana tylko w tej przeglądarce na tym urządzeniu. Żeby przenieść ją na inne urządzenie (np. z PC na iPhone'a), wyeksportuj kopię i zaimportuj ją tam.</p>
       <div id="histNotice" class="notice" hidden></div>
       <div class="tablewrap"><table>
-        <thead><tr><th></th><th>Data</th><th>Aplikacja</th><th>Klient</th><th>Tryb</th><th>Zakres</th><th class="num">Śr. FPS</th><th class="num">P5</th><th class="num">Enc. P95</th><th class="num">Bitrate</th><th></th></tr></thead>
+        <thead><tr><th></th><th>Data</th><th>Aplikacja</th><th>Klient</th><th>Tryb</th><th>Zakres</th><th class="num">Wynik</th><th class="num">Śr. FPS</th><th class="num">P5</th><th class="num">Enc. P95</th><th class="num">Bitrate</th><th></th></tr></thead>
         <tbody id="histBody"></tbody>
       </table></div>
     </section>
@@ -103,15 +103,16 @@
   </main>
 </div>
 
-<script src="js/core.js?v=202609261224"></script>
-<script src="js/parsers/vibepollo.js?v=202609261224"></script>
-<script src="js/parsers/clientlog.js?v=202609261224"></script>
-<script src="js/parsers/steamlog.js?v=202609261224"></script>
-<script src="js/engine/diagnostics.js?v=202609261224"></script>
-<script src="js/engine/session.js?v=202609261224"></script>
-<script src="js/storage.js?v=202609261224"></script>
-<script src="js/store.js?v=202609261224"></script>
-<script src="js/chart.js?v=202609261224"></script>
-<script src="js/app.js?v=202609261224"></script>
+<script src="js/core.js?v=202609301851"></script>
+<script src="js/parsers/vibepollo.js?v=202609301851"></script>
+<script src="js/parsers/clientlog.js?v=202609301851"></script>
+<script src="js/parsers/steamlog.js?v=202609301851"></script>
+<script src="js/engine/diagnostics.js?v=202609301851"></script>
+<script src="js/engine/score.js?v=202609301851"></script>
+<script src="js/engine/session.js?v=202609301851"></script>
+<script src="js/storage.js?v=202609301851"></script>
+<script src="js/store.js?v=202609301851"></script>
+<script src="js/chart.js?v=202609301851"></script>
+<script src="js/app.js?v=202609301851"></script>
 </body>
 </html>

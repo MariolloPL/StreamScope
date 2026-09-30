@@ -225,9 +225,10 @@
     });
     const S = state.filter === 'all' ? all : all.filter(s => kindOf(s) === state.filter);
     $('#sessCount').textContent = all.length ? `${state.hosts.size} ${plural(state.hosts.size, 'plik', 'pliki', 'plików')} Vibepollo · ${state.logs.size} ${plural(state.logs.size, 'log', 'logi', 'logów')} klienta${state.steam.size ? ` · ${state.steam.size} ${plural(state.steam.size, 'log', 'logi', 'logów')} Steama` : ''}` : '';
-    if (!S.length) { body.innerHTML = `<tr><td colspan="6" class="empty">Brak plików. Przeciągnij pliki powyżej.</td></tr>`; return; }
+    if (!S.length) { body.innerHTML = `<tr><td colspan="7" class="empty">Brak plików. Przeciągnij pliki powyżej.</td></tr>`; return; }
     const row = (s, pill, fps, tags) => `<tr class="pick${s.id === state.selected ? ' sel' : ''}" data-id="${esc(s.id)}" tabindex="0">
         <td>${pill}</td>
+        <td class="num">${scoreChip(sessionScore(s))}</td>
         <td><div class="app">${esc(s.app)}</div><div class="mono small muted">${esc(modeOf(s))}</div></td>
         <td class="mono"><div style="white-space:nowrap">${shortDate(s.t0)}</div><div class="small muted">${tfmt(s.t1 - s.t0)}</div></td>
         <td>${clientCell(s)}</td>
@@ -274,6 +275,7 @@
     r.b = Math.max(r.a + 1, Math.min(r.b, s.t1 + 60));
     SS.Store.putRange({ id: s.id, a: r.a, b: r.b, trimMin: r.trimMin || 0 }).catch(() => {});
     updateRangeViews();
+    renderSessions();   // the table's score follows the chosen range
   }
 
   // Forget one session: its host file plus client logs that pair with nothing else.
@@ -355,6 +357,7 @@
       </section>
       <section class="panel" aria-labelledby="bTitle">
         <div class="panel-head"><h2 id="bTitle">Benchmark odcinków</h2><span class="muted small">${sum.n} odc., łącznie ${tfmt(sum.dur)}</span></div>
+        ${sum.n ? scoreHtml(SS.Score.steam(steamSegs(s), sum)) : ''}
         ${sum.n ? `<div class="stats">
           ${stat('Śr. FPS (Steam)', num(sum.fps, 1), last.fpsLimit ? '/ ' + last.fpsLimit : '', true)}
           ${stat('Czas klatki śr.', num(sum.frameMs, 2), 'ms', true)}
@@ -399,7 +402,10 @@
       renderSteamDetail(el, s); renderSessions();
     }));
     $('#removeBtn').addEventListener('click', () => removeSession(s));
-    const summary = () => SS.Report.steamSummary(s, steamSegs(s), SS.steamSummary(steamSegs(s)), s.sdiag);
+    const summary = () => {
+      const segs = steamSegs(s), sum = SS.steamSummary(segs);
+      return { ...SS.Report.steamSummary(s, segs, sum, s.sdiag), scores: SS.Score.compact(SS.Score.steam(segs, sum)) };
+    };
     $('#saveBtn').addEventListener('click', () => {
       const ok = SS.History.add(summary());
       actMsg(ok ? 'Zapisano w historii tej przeglądarki.' : 'Zapisano tylko do zamknięcia karty: przeglądarka blokuje pamięć lokalną.');
@@ -571,6 +577,30 @@
     });
   }
 
+  // ---------- scores 1–10 ----------
+  // Score of the session's current range (Vibepollo) or chosen segments (Steam), as shown in its detail.
+  function sessionScore(s) {
+    if (s.steam) { const segs = steamSegs(s); return SS.Score.steam(segs, SS.steamSummary(segs)); }
+    if (!s.host) return null;
+    const e = effRange(s);
+    return SS.Score.vibepollo(s, SS.Benchmark.compute(s, e.a, e.b));
+  }
+  const scoreChip = sc => sc && sc.overall != null ? `<span class="score-chip s-${SS.Score.cls(sc.overall)}">${num(sc.overall, 1)}</span>` : '<span class="muted">—</span>';
+  function scoreHtml(sc) {
+    if (!sc || sc.overall == null) return '';
+    const tile = (k, p) => {
+      const c = SS.Score.cls(p.score), w = p.score == null ? 0 : p.score * 10;
+      return `<div class="score"><div class="top"><b>${SS.Score.LABELS[k]}${k === 'headroom' ? ' <span class="muted small">(info)</span>' : ''}</b><span class="val s-${c}">${p.score == null ? 'n/d' : num(p.score, 1)}</span></div>
+        <div class="meter"><i class="m-${c}" style="width:${w}%"></i></div><p>${esc(p.why)}</p></div>`;
+    };
+    const order = ['fps', 'stability', 'latency', 'network', 'image', 'headroom'].filter(k => sc.parts[k]);
+    return `<div class="scorebox">
+      <div class="score-big"><span class="n s-${SS.Score.cls(sc.overall)}">${num(sc.overall, 1)}</span><span class="d">ocena ogólna / 10</span></div>
+      <div class="scores">${order.map(k => tile(k, sc.parts[k])).join('')}</div>
+    </div>
+    <p class="caveat">Ocena ogólna: FPS 25%, stabilność 20%, opóźnienie 25%, sieć 20%, obraz 10% (bez ocen „n/d”). Zapas hosta jest tylko informacyjny. Liczona dla wybranego zakresu, więc menu i ekrany ładowania ją obniżają. Oceny Steama opierają się na innych pomiarach niż Vibepollo/StreamLight (np. odchylenie FPS zamiast percentyli), więc porównuj je ostrożnie.</p>`;
+  }
+
   const stat = (k, v, unit, hl) => `<div class="stat${hl ? ' hl' : ''}"><span class="k">${k}</span><span class="v">${v}${unit ? ` <small>${unit}</small>` : ''}</span></div>`;
 
   function benchHtml(s, b) {
@@ -579,7 +609,7 @@
     if (!H) return `<p class="muted">W wybranym zakresie jest mniej niż 2 próbki hosta. Poszerz zakres.</p>`;
     const ev = b.clientEvents;
     const target = s.host.target;
-    return `<div class="stats">
+    return scoreHtml(SS.Score.vibepollo(s, b)) + `<div class="stats">
       ${stat('Śr. FPS', num(H.fpsAvg, 2), target ? '/ ' + target : '', true)}
       ${stat('P50 (mediana)', num(H.fpsP50, 1), '', true)}
       ${stat('P5', num(H.fpsP5, 1), '', true)}
@@ -671,7 +701,7 @@
     const e = effRange(s);
     const bench = SS.Benchmark.compute(s, e.a, e.b);
     const label = `${fmtU(s, e.a)}–${fmtU(s, e.b)} (${baseName(s)})`;
-    return SS.Report.summary(s, bench, label, diagOf(s));
+    return { ...SS.Report.summary(s, bench, label, diagOf(s)), scores: SS.Score.compact(SS.Score.vibepollo(s, bench)) };
   }
 
   // ---------- actions ----------
@@ -696,12 +726,13 @@
     $('#histCount').textContent = list.length ? `(${list.length})` : '';
     const body = $('#histBody');
     [...state.compare].forEach(id => { if (!list.find(x => x.id === id)) state.compare.delete(id); });
-    if (!list.length) { body.innerHTML = `<tr><td colspan="11" class="empty">Brak zapisanych sesji. W widoku Analiza wybierz zakres i kliknij „Zapisz do historii”.</td></tr>`; }
+    if (!list.length) { body.innerHTML = `<tr><td colspan="12" class="empty">Brak zapisanych sesji. W widoku Analiza wybierz zakres i kliknij „Zapisz do historii”.</td></tr>`; }
     else body.innerHTML = list.map(x => `<tr>
         <td><input type="checkbox" data-cmp="${esc(x.id)}" ${state.compare.has(x.id) ? 'checked' : ''} aria-label="Zaznacz do porównania"></td>
         <td class="num">${date(x.date)}</td><td class="app">${esc(x.app)}</td><td>${esc(x.streamer || '—')}</td>
         <td class="mono small">${esc([x.codec, x.resolution && x.resolution.replace('x', '×') + (x.target_fps ? '@' + x.target_fps : ''), x.bitrate_setting_mbps ? x.bitrate_setting_mbps + ' Mb/s' : ''].filter(Boolean).join(' '))}</td>
         <td class="small">${esc(x.range || '')}</td>
+        <td class="num">${x.scores && x.scores.overall != null ? `<span class="score-chip s-${SS.Score.cls(x.scores.overall)}">${num(x.scores.overall, 1)}</span>` : '—'}</td>
         <td class="num">${x.host ? num(x.host.avg_fps, 2) : '—'}</td><td class="num">${x.host ? num(x.host.p5_fps, 1) : '—'}</td>
         <td class="num">${x.host ? num(x.host.encode_p95_ms, 1) : '—'}</td><td class="num">${x.host ? num(x.host.bitrate_avg_mbps, 1) : '—'}</td>
         <td><button class="small" type="button" data-del="${esc(x.id)}">Usuń</button></td></tr>`).join('');
@@ -717,6 +748,11 @@
   }
 
   const CMP_ROWS = [
+    ['Oceny (1–10)', null],
+    ['Ocena ogólna', x => x.scores && x.scores.overall, 1], ['FPS', x => x.scores && x.scores.fps, 1],
+    ['Stabilność', x => x.scores && x.scores.stability, 1], ['Opóźnienie', x => x.scores && x.scores.latency, 1],
+    ['Sieć', x => x.scores && x.scores.network, 1], ['Obraz', x => x.scores && x.scores.image, 1],
+    ['Zapas hosta (info)', x => x.scores && x.scores.headroom, 1],
     ['Konfiguracja', null],
     ['Klient', x => x.streamer], ['Tryb', x => [x.codec, x.resolution, x.target_fps && '@' + x.target_fps].filter(Boolean).join(' ')],
     ['Bitrate ustawiony (Mb/s)', x => x.bitrate_setting_mbps, 0], ['Długość zakresu', x => x.duration_s, 't'],
