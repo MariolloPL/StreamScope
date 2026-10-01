@@ -36,6 +36,7 @@ Markery: wyłącz i włącz pad podłączony do klienta na początku i na końcu
   - sesje Vibepollo z API panelu (`/api/history/sessions`), łącząc reconnecty tak samo jak eksport w panelu; `import_dirs` służy tylko do jednorazowego przejęcia starych, ręcznie pobranych eksportów,
   - `streaming_log*.txt` Steama,
   - logi `StreamLight-*.log` / `Moonlight-*.log` z udostępnionego folderu klienta (np. `\\K12\StreamLightLogs`);
+  - sesje diagnostyczne VRR z Moonlighta (`client_logs.vrr_dirs`, udostępniony folder `vrr-diagnostics` klienta): `Moonlight.log` oraz podsumowanie sekundowe z `.vrrtrace` (wyświetlane FPS, opóźnienie odbiór→ekran, odrzucone klatki), dzięki czemu statystyki klienta są dostępne dla wybranego zakresu;
 - udostępnia StreamScope w sieci domowej pod `http://<IP-PC>:8765/`. Każde urządzenie widzi te same sesje, zakresy i historię. Pliki wrzucone ręcznie też trafiają do archiwum.
 
 Konfiguracja: skopiuj `agent/config.example.json` do `agent/config.json` (plik jest w `.gitignore`) i wpisz login i hasło do panelu Vibepollo oraz ścieżkę do logów klienta.
