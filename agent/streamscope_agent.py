@@ -228,8 +228,10 @@ def summarize_trace(paths, first_frame_unix):
     tot = {"frames": 0, "presented": 0, "dropped": 0}
     first = None
     footer_ok = True
+    tot["lost"] = 0
     for p in paths:
         idx = None
+        prev_frame = None      # frame numbers are consecutive; a jump means frames lost in the network
         for r in read_vrrtrace_rows(p):
             if not r:
                 continue
@@ -248,9 +250,16 @@ def summarize_trace(paths, first_frame_unix):
             rx = int(rx)
             if first is None or rx < first:
                 first = rx
-            b = per.setdefault(rx // 1_000_000, {"rx": 0, "pres": 0, "drop": 0, "lat": [], "dec": []})
+            b = per.setdefault(rx // 1_000_000, {"rx": 0, "pres": 0, "drop": 0, "lost": 0, "lat": [], "dec": []})
             b["rx"] += 1
             tot["frames"] += 1
+            fr = g("frame")
+            if fr:
+                fr = int(fr)
+                if prev_frame is not None and fr > prev_frame + 1:
+                    b["lost"] += fr - prev_frame - 1
+                    tot["lost"] += fr - prev_frame - 1
+                prev_frame = fr if prev_frame is None else max(prev_frame, fr)
             pe = g("present_end_us")
             if pe and pe != "0":
                 lat = (int(pe) - rx) / 1000.0
@@ -278,6 +287,7 @@ def summarize_trace(paths, first_frame_unix):
         "rx": [per[s]["rx"] for s in secs],
         "pres": [per[s]["pres"] for s in secs],
         "drop": [per[s]["drop"] for s in secs],
+        "lost": [per[s]["lost"] for s in secs],
         "lat50": [pct(per[s]["lat"], 0.5) for s in secs],
         "lat95": [pct(per[s]["lat"], 0.95) for s in secs],
         "dec50": [pct(per[s]["dec"], 0.5) for s in secs],
@@ -317,7 +327,8 @@ def collect_vrr(cfg, arc, status, state):
                 if not info.get("finished_utc"):
                     continue                      # still streaming: the capture is finalised at the end
                 traces = sorted(os.path.join(cap, n) for n in os.listdir(cap) if n.endswith(".vrrtrace"))
-                sig = f"{info['finished_utc']}|{sum(os.path.getsize(t) for t in traces)}"
+                # "v2": summaries with lost-frame counts; bumping the prefix reprocesses older captures.
+                sig = f"v2|{info['finished_utc']}|{sum(os.path.getsize(t) for t in traces)}"
                 if done.get(name) == sig:
                     continue
                 with open(os.path.join(cap, "Moonlight.log"), encoding="utf-8", errors="replace") as f:

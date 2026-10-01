@@ -131,9 +131,13 @@ SS.Benchmark = (() => {
       frames += (g[g.length - 1].frames_sent - g[0].frames_sent); secs += g[g.length - 1].timestamp_unix - g[0].timestamp_unix;
     }
     const share = th => fps.filter(v => v >= th).length / fps.length * 100;
+    // Vibepollo drops to ~16 FPS keepalive on a static picture (loading screen, pause): not a stream hiccup.
+    const KEEPALIVE = 20;
+    const active = fps.filter(v => v > KEEPALIVE);
     return {
       n: W.length, from: W[0].timestamp_unix, to: W[W.length - 1].timestamp_unix,
       fpsAvg: mean(fps), fpsP50: quantile(fps, 0.5), fpsP5: quantile(fps, 0.05), fpsP1: quantile(fps, 0.01),
+      fpsP1Active: quantile(active, 0.01), fpsAvgActive: mean(active), keepaliveSamples: fps.length - active.length,
       fpsSent: secs > 0 ? frames / secs : null,
       pct90: share(90), pct100: share(100),
       bitrateAvg: mean(br), bitrateP95: quantile(br, 0.95),
@@ -149,12 +153,14 @@ SS.Benchmark = (() => {
   // Client side in range from the per-second VRR-capture timeline: displayed FPS, drops, latency.
   function trace(c, a, b) {
     const T = c.trace;
-    let secs = 0, pres = 0, rx = 0, drop = 0;
+    let secs = 0, pres = 0, rx = 0, drop = 0, lost = 0;
+    const hasLost = Array.isArray(T.lost);
     const presPerSec = [], lat50 = [], lat95 = [], dec50 = [];
     for (let i = 0; i < T.t.length; i++) {
       const u = c.traceU0 + T.t[i];
       if (u < a || u > b) continue;
       secs++; pres += T.pres[i]; rx += T.rx[i]; drop += T.drop[i];
+      if (hasLost) lost += T.lost[i];
       presPerSec.push(T.pres[i]);
       if (T.lat50[i] != null) lat50.push(T.lat50[i]);
       if (T.lat95[i] != null) lat95.push(T.lat95[i]);
@@ -164,6 +170,7 @@ SS.Benchmark = (() => {
     return {
       seconds: secs, fpsShown: pres / secs, fpsRecv: rx / secs, fpsShownP5: quantile(presPerSec, 0.05), fpsShownP1: quantile(presPerSec, 0.01),
       dropped: drop, droppedPerMin: drop / (secs / 60),
+      lost: hasLost ? lost : null, lostPct: hasLost && rx + lost ? lost / (rx + lost) * 100 : null,
       lat50: SS.stats.median(lat50), lat95: SS.stats.median(lat95), lat95Worst: quantile(lat95, 0.95), dec50: SS.stats.median(dec50)
     };
   }

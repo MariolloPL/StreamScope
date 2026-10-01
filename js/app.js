@@ -714,6 +714,7 @@
         ${stat('Odbiór → ekran (P95)', num(T.lat95, 1), `ms, najgorsze 5% sekund ${num(T.lat95Worst, 1)}`)}
         ${stat('Dekodowanie (P50)', num(T.dec50, 2), 'ms')}
         ${stat('Odrzucone klatki', num(T.dropped, 0), `${num(T.droppedPerMin, 1)}/min`)}
+        ${T.lost != null ? stat('Zgubione w sieci', num(T.lost, 0), `klatek (${num(T.lostPct, 2)}%)`) : ''}
         ${stat('Pokrycie', tfmt(T.seconds), 'sekund z danymi')}
       </div></div>`;
   }

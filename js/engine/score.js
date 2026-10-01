@@ -42,8 +42,11 @@ SS.Score = (() => {
     const ratio = H.fpsAvg / target;
     parts.fps = { score: lin(ratio, 0.5, 0.95), why: `Średnio ${f(H.fpsAvg)} z ${target} FPS (${f(ratio * 100, 0)}%); ≥95% = 10, ≤50% = 1. Jeśli limitem jest sama gra, ta ocena też spada.` };
 
-    const lowRatio = H.fpsAvg ? H.fpsP1 / H.fpsAvg : null;
-    parts.stability = { score: lin(lowRatio, 0.5, 0.9), why: `P1 = ${f(H.fpsP1)} FPS, czyli ${f(lowRatio * 100, 0)}% średniej (P5 ${f(H.fpsP5)}); ≥90% = 10, ≤50% = 1.` };
+    // Keepalive samples (static picture: loading screen, pause) are excluded: the stream is fine there.
+    const p1 = H.fpsP1Active ?? H.fpsP1, avgA = H.fpsAvgActive ?? H.fpsAvg;
+    const lowRatio = avgA ? p1 / avgA : null;
+    const skipped = H.keepaliveSamples ? ` Pominięto ${H.keepaliveSamples} próbek (~${Math.round(H.keepaliveSamples * 2)} s) trybu podtrzymania ≤20 FPS: statyczny obraz albo ładowanie, nie problem streamu.` : '';
+    parts.stability = { score: lin(lowRatio, 0.5, 0.9), why: `P1 = ${f(p1)} FPS, czyli ${f(lowRatio * 100, 0)}% średniej (P5 ${f(H.fpsP5)}); ≥90% = 10, ≤50% = 1.${skipped}` };
 
     const T = bench.clientTrace;
     if (T && T.lat50 != null) {
@@ -70,7 +73,11 @@ SS.Score = (() => {
     let s = 10;
     if (H.losses > 0) { s -= 3; pen.push(`${H.losses} strat pakietów −3`); }
     if (H.videoDropped > 0) { s -= 2; pen.push(`${H.videoDropped} dropów wideo −2`); }
-    if (c && c.netLossPct) { const p = Math.min(3, c.netLossPct * 20); s -= p; pen.push(`utrata w sieci ${f(c.netLossPct, 2)}% −${f(p, 1)}`); }
+    // Network loss: lost frames in the range (gaps in frame numbers of the per-frame capture) when
+    // available; otherwise the client's whole-stream figure.
+    const rangeLoss = T && T.lostPct != null;
+    const lossPct = rangeLoss ? T.lostPct : (c ? c.netLossPct : null);
+    if (lossPct) { const p = Math.min(3, lossPct * 20); s -= p; pen.push(`utrata w sieci ${f(lossPct, 2)}%${rangeLoss ? ` (${T.lost} klatek w zakresie)` : ' (cały stream)'} −${f(p, 1)}`); }
     // With a per-frame capture, client-side drops are counted for the range below (not the whole stream).
     if (c && c.jitterLossPct && !(T && T.dropped != null)) { const p = Math.min(3, c.jitterLossPct * 10); s -= p; pen.push(`utrata przez jitter ${f(c.jitterLossPct, 2)}% −${f(p, 1)}`); }
     if (ev.rfi) { const p = Math.min(2, ev.rfi / hours * 0.1); s -= p; pen.push(`${ev.rfi} RFI (${f(ev.rfi / hours, 1)}/h) −${f(p, 1)}`); }
