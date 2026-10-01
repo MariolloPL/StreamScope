@@ -29,6 +29,14 @@ try {
     Write-Host " [OK] Harmonogram zadan niedostepny ($($_.Exception.Message)); autostart ustawiony przez rejestr (Run)."
 }
 
+# Restart: stop a running agent so the current code and config.json take effect.
+$running = @(Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" | Where-Object { $_.CommandLine -like '*streamscope_agent.py*' })
+foreach ($p in $running) {
+    try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; Write-Host " [OK] Zatrzymano poprzedniego agenta (PID $($p.ProcessId))." }
+    catch { Write-Host " [!] Nie moge zatrzymac agenta PID $($p.ProcessId) (uruchomiony jako administrator?). Zamknij pythonw.exe w Menedzerze zadan." }
+}
+if ($running.Count) { Start-Sleep -Seconds 2 }
+
 # Start it now (a second copy exits by itself if the agent already runs).
 if ($mode -eq 'task') { Start-ScheduledTask -TaskName $name } else { Start-Process $pyw -ArgumentList "`"$agent`"" -WorkingDirectory $PSScriptRoot }
 Start-Sleep -Seconds 4
