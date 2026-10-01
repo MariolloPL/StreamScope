@@ -235,6 +235,12 @@
     });
     const S = state.filter === 'all' ? all : all.filter(s => kindOf(s) === state.filter);
     $('#sessCount').textContent = all.length ? `${state.hosts.size} ${plural(state.hosts.size, 'plik', 'pliki', 'plików')} Vibepollo · ${state.logs.size} ${plural(state.logs.size, 'log', 'logi', 'logów')} klienta${state.steam.size ? ` · ${state.steam.size} ${plural(state.steam.size, 'log', 'logi', 'logów')} Steama` : ''}` : '';
+    const hi = $('#hiddenInfo');
+    hi.hidden = !state.hidden.size;
+    if (state.hidden.size) {
+      hi.innerHTML = `Ukryte sesje: ${state.hidden.size} · <button class="small" type="button" id="unhideBtn">Przywróć wszystkie</button>`;
+      $('#unhideBtn').onclick = restoreHidden;
+    }
     if (!S.length) { body.innerHTML = `<tr><td colspan="7" class="empty">Brak plików. Przeciągnij pliki powyżej.</td></tr>`; return; }
     const row = (s, pill, fps, tags) => `<tr class="pick${s.id === state.selected ? ' sel' : ''}" data-id="${esc(s.id)}" tabindex="0">
         <td>${pill}</td>
@@ -286,6 +292,14 @@
     SS.Store.putRange({ id: s.id, a: r.a, b: r.b, trimMin: r.trimMin || 0 }).catch(() => {});
     updateRangeViews();
     renderSessions();   // the table's score follows the chosen range
+  }
+
+  // Bring back sessions hidden with "Usuń sesję z pamięci" (agent mode / Steam keep files and only hide).
+  async function restoreHidden() {
+    const ids = [...state.hidden];
+    state.hidden.clear();
+    await Promise.all(ids.map(id => SS.Store.deleteRange(id).catch(() => {})));
+    rebuild();
   }
 
   // Forget one session: its host file plus client logs that pair with nothing else.

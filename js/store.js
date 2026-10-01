@@ -36,6 +36,7 @@ SS.Store = (() => {
   const allFiles = () => tx('files', 'readonly', s => s.getAll());
   const deleteFile = key => tx('files', 'readwrite', s => s.delete(key));
   const putRange = r => tx('ranges', 'readwrite', s => s.put(r));
+  const deleteRange = id => tx('ranges', 'readwrite', s => s.delete(id));
   const allRanges = () => tx('ranges', 'readonly', s => s.getAll());
   const clearAll = () => Promise.all([tx('files', 'readwrite', s => s.clear()), tx('ranges', 'readwrite', s => s.clear())]);
 
@@ -47,7 +48,7 @@ SS.Store = (() => {
     try { return navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null; } catch (e) { return null; }
   }
 
-  const api = { putFile, allFiles, deleteFile, putRange, allRanges, clearAll, persist, usage, agent: null };
+  const api = { putFile, allFiles, deleteFile, putRange, deleteRange, allRanges, clearAll, persist, usage, agent: null };
 
   // When the page is served by StreamScope Agent, the agent's archive replaces this browser's IndexedDB,
   // so every device on the network sees the same files, ranges and history.
@@ -82,6 +83,7 @@ SS.Store = (() => {
     api.deleteFile = async () => {};   // sources would re-supply the file; the app hides sessions instead
     api.allRanges = async () => Object.values((await loadPrefs()).ranges || {});
     api.putRange = async r => { await loadPrefs(); prefs.ranges = prefs.ranges || {}; prefs.ranges[r.id] = r; savePrefs(); };
+    api.deleteRange = async id => { await loadPrefs(); if (prefs.ranges) delete prefs.ranges[id]; savePrefs(); };
     api.clearAll = async () => { await loadPrefs(); prefs.ranges = {}; savePrefs(); };
     api.usage = async () => null;
     api.persist = async () => true;
