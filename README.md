@@ -40,7 +40,7 @@ Markery: wyłącz i włącz pad podłączony do klienta na początku i na końcu
 
 Konfiguracja: skopiuj `agent/config.example.json` do `agent/config.json` (plik jest w `.gitignore`) i wpisz login i hasło do panelu Vibepollo oraz ścieżkę do logów klienta.
 
-Uruchomienie: `agent\start-agent.cmd`, a autostart po zalogowaniu: `agent\install-autostart.cmd`. Żeby telefon miał dostęp, Zapora Windows musi przepuszczać port 8765 w sieci prywatnej (PowerShell jako administrator):
+Uruchomienie: `agent\start-agent.cmd`, a autostart po zalogowaniu: `agent\install-autostart.cmd` (zadanie w Harmonogramie zadań, startuje od razu po zalogowaniu; folder Autostart Windows potrafi opóźnić start o kilka minut). Żeby telefon miał dostęp, Zapora Windows musi przepuszczać port 8765 w sieci prywatnej (PowerShell jako administrator):
 
 ```powershell
 New-NetFirewallRule -DisplayName "StreamScope Agent" -Direction Inbound -Protocol TCP -LocalPort 8765 -Profile Private -Action Allow
