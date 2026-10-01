@@ -25,7 +25,10 @@ SS.Chart = (() => {
     let top = padT;
     panels.forEach((p, pi) => {
       const vals = [];
-      p.series.forEach(se => S.forEach(s => { const v = se.get(s); if (v != null && isFinite(v)) vals.push(v); }));
+      p.series.forEach(se => {
+        if (se.points) se.points.forEach(pt => { if (pt.v != null && isFinite(pt.v)) vals.push(pt.v); });
+        else S.forEach(s => { const v = se.get(s); if (v != null && isFinite(v)) vals.push(v); });
+      });
       const pmax = p.max || niceMax(Math.max(p.minMax || 1, SS.stats.max(vals) || 0) * 1.05);
       const y = v => top + p.h - (Math.min(Math.max(v, 0), pmax) / pmax) * p.h;
 
@@ -50,6 +53,17 @@ SS.Chart = (() => {
 
       p.series.forEach(se => {
         let d = '', pen = false, prevU;
+        if (se.points) {
+          // Series from another source (e.g. client per-second timeline): {u, v}, broken on gaps > 3 s.
+          let lastU = null;
+          for (const pt of se.points) {
+            if (pt.v == null || !isFinite(pt.v) || pt.u < T0 || pt.u > opts.t1) { pen = false; continue; }
+            if (lastU != null && pt.u - lastU > 3) pen = false;
+            d += `${pen ? 'L' : 'M'}${x(pt.u).toFixed(1)},${y(pt.v).toFixed(1)}`; pen = true; lastU = pt.u;
+          }
+          svg += `<path d="${d}" fill="none" stroke="${se.c}" stroke-width="${se.w || 1.3}" stroke-linejoin="round" stroke-linecap="round"${se.dash ? ` stroke-dasharray="${se.dash}"` : ''}/>`;
+          return;
+        }
         for (const s of S) {
           const v = se.get(s);
           if (s.session_uuid !== prevU) { pen = false; prevU = s.session_uuid; }
@@ -106,7 +120,7 @@ SS.Chart = (() => {
       const cu = s ? s.timestamp_unix : u;
       cross.setAttribute('x1', x(cu)); cross.setAttribute('x2', x(cu)); cross.setAttribute('visibility', 'visible');
       const near = (opts.markers || []).filter(m => Math.abs(m.u - u) <= T / 150).map(m => m.label);
-      tip.innerHTML = `<b>${opts.fmtAxis(cu)} · ${SS.time.clock(cu)}</b>` + (s ? opts.tipRows(s) : '') + (near.length ? `<br><b>${near.join(', ')}</b>` : '');
+      tip.innerHTML = `<b>${opts.fmtAxis(cu)} · ${SS.time.clock(cu)}</b>` + (s ? opts.tipRows(s) : '') + (opts.tipExtra ? opts.tipExtra(cu) : '') + (near.length ? `<br><b>${near.join(', ')}</b>` : '');
       tip.hidden = false;
       const r = el.getBoundingClientRect();
       const left = ev.clientX - r.left + 14;

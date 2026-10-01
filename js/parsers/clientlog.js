@@ -2,7 +2,8 @@
 // Lines look like "00:28:14 - SDL Info (0): Gamepad 0 is gone"; the time is elapsed since the unix epoch in the
 // file name. One log can hold several streams (launch → quit); each one ends with a "Global video stats" block.
 SS.parseClientLog = function (name, text) {
-  const epochM = name.match(/-(\d{9,11})(?:\s*\(\d+\))?\.(?:log|txt)$/i);
+  // "Moonlight-<unix>.log", "(1)" download copies, and agent-written "Moonlight-<unix>-vrr-<capture id>.log".
+  const epochM = name.match(/-(\d{9,11})(?:-vrr-[\w]+)?(?:\s*\(\d+\))?\.(?:log|txt)$/i);
   const epoch = epochM ? +epochM[1] : null;
   const client = /^streamlight/i.test(name) ? 'StreamLight' : /^moonlight/i.test(name) ? 'Moonlight' : 'Klient';
 
@@ -93,8 +94,10 @@ SS.parseClientLog = function (name, text) {
       let j = i + 1;
       while (j < lines.length && !LINE.test(lines[j])) block.push(lines[j++]);
       parseStats(cur, block);
-      if (cur.tEnd == null) cur.tEnd = t;
-      endStream(cur.tEnd);
+      // Newer Moonlight builds also print this block mid-stream (e.g. after a renderer hiccup). Only the
+      // block after "Quit event received" / "Stopping video stream" closes the stream; earlier ones just
+      // refresh the stats, and the last one wins.
+      if (cur.tEnd != null) endStream(cur.tEnd);
       i = j - 1;
     }
   }
@@ -102,7 +105,8 @@ SS.parseClientLog = function (name, text) {
 
   function parseStats(s, block) {
     const st = {}; const hs = {};
-    for (const l of block) {
+    for (const raw of block) {
+      const l = raw.trim();   // newer Moonlight builds indent the "After decoding" sub-lines
       let x;
       if ((x = l.match(/^Video stream: (\d+)x(\d+) ([\d.]+) FPS \(Codec: ([^)]+)\)/))) { st.streamFps = +x[3]; st.codec = x[4].trim(); }
       else if ((x = l.match(/^Bitrate: ([\d.]+) Mbps, Peak \(10s\): ([\d.]+)/))) { st.bitrateEnd = +x[1]; st.bitratePeak10 = +x[2]; }
@@ -123,6 +127,17 @@ SS.parseClientLog = function (name, text) {
       else if ((x = l.match(/^Client interval error \(1s\): (collecting|[\d.]+ ms) \| Tolerance: ([\d.]+) ms \| Dropped \(30s\): (\d+)/))) {
         st.intervalErrorMs = x[1] === 'collecting' ? null : parseFloat(x[1]); st.dropped30s = +x[3];
       }
+      // Newer Moonlight VRR builds (6.1.0-vrr*): renamed and additional fields.
+      else if ((x = l.match(/^Frames dropped by client pacing: ([\d.]+)%/))) st.jitterLossPct = +x[1];
+      else if ((x = l.match(/^Frames skipped before decoding: ([\d.]+)%/))) st.skippedPct = +x[1];
+      else if ((x = l.match(/^VRR buffer: ([\d.]+) ms added \(limit ([\d.]+) ms\) \| (\w+)/))) { st.vrrBufferMs = +x[1]; st.vrrBufferLimitMs = +x[2]; st.vrrPacing = x[3]; }
+      else if ((x = l.match(/^Client timing: (collecting|[\d.]+%) \(target ([\d.]+)%/))) { st.smoothness = x[1] === 'collecting' ? null : parseFloat(x[1]); st.smoothnessTarget = +x[2]; }
+      else if ((x = l.match(/^Timing error \(1s avg\): (collecting|[\d.]+ ms) \| Allowed: ([\d.]+) ms \| Drops \(30s\): (\d+)/))) {
+        st.intervalErrorMs = x[1] === 'collecting' ? null : parseFloat(x[1]); st.dropped30s = +x[3];
+      }
+      else if ((x = l.match(/^GPU decode wait: ([\d.]+) ms/))) st.gpuDecodeWaitMs = +x[1];
+      else if ((x = l.match(/^Frame queue: ([\d.]+) ms/))) st.queueMs = +x[1];
+      else if ((x = l.match(/^Rendering: ([\d.]+) ms/))) st.renderMs = +x[1];
       else if ((x = l.match(/^GPU: (\d+)% \| Enc: (\d+)% \| Temp: (\d+)C \| VRAM: (\d+) \/ (\d+) MB/))) { hs.gpu = +x[1]; hs.enc = +x[2]; hs.temp = +x[3]; hs.vramUsed = +x[4]; hs.vramTotal = +x[5]; }
       else if ((x = l.match(/^CPU: (\d+)% \| Net TX: ([\d.]+) Mbps/))) { hs.cpu = +x[1]; hs.netTx = +x[2]; }
     }

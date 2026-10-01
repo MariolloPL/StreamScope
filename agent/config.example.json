@@ -17,6 +17,9 @@
     "enabled": true,
     "dirs": [
       "\\\\K12\\StreamLightLogs"
+    ],
+    "vrr_dirs": [
+      "\\K12\\moonlight-vrr-diagnostics"
     ]
   }
 }

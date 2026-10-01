@@ -15,7 +15,7 @@
 
   const state = {
     hosts: new Map(), logs: new Map(), diag: new Map(), steam: new Map(), steamSel: new Map(), hidden: new Set(),
-    agent: null, fileIndex: new Map(),
+    agent: null, fileIndex: new Map(), traces: new Map(),
     sessions: [], selected: null, ranges: new Map(), timeBase: 'client', compare: new Set(),
     filter: (() => { try { return localStorage.getItem('streamscope.filter') || 'all'; } catch (e) { return 'all'; } })()
   };
@@ -27,6 +27,14 @@
     // often start with "[timestamp]" and must not be reported as broken JSON.
     if (/\.json$/i.test(n) || (!/\.(log|txt|csv)$/i.test(n) && /^\s*\{/.test(text.slice(0, 50)))) {
       if (/^CapFrameX/i.test(n) || /"Runs"\s*:/.test(text.slice(0, 4000))) throw new Error('CapFrameX jeszcze nieobsługiwany');
+      if (/"schema"\s*:\s*"streamscope-client-trace"/.test(text.slice(-4000)) || /"schema":"streamscope-client-trace"/.test(text)) {
+        // Per-second client timeline the agent builds from Moonlight's VRR diagnostic capture (.vrrtrace).
+        const t = JSON.parse(text);
+        if (!Array.isArray(t.t) || !t.first_frame_unix) throw new Error('niepełne podsumowanie vrrtrace');
+        t.name = n;
+        state.traces.set(n, t);
+        return { key: 't:' + n, kind: 'trace' };
+      }
       const h = SS.parseVibepollo(n, text);
       if (state.hosts.has(h.key)) throw new Error(`duplikat ${state.hosts.get(h.key).name}`);
       h.gameplay = SS.Gameplay.detect(h);
@@ -113,6 +121,7 @@
     if (key[0] === 'h') { state.hosts.delete(k); state.diag.delete(k); }
     else if (key[0] === 'c') state.logs.delete(k);
     else if (key[0] === 's') state.steam.delete(k);
+    else if (key[0] === 't') state.traces.delete(k);
   }
   let polling = false;
   async function pollAgent() {
@@ -176,7 +185,7 @@
         steamById.set(id, { id, steam: c, sdiag: SS.steamDiag(c), file: f, host: null, clients: [], markers: [], events: [], log: null, clientBase: null, offset: 0, t0: c.u0, t1: c.u1, app: c.game });
       }
     }
-    state.sessions = SS.Session.build([...state.hosts.values()], [...state.logs.values()])
+    state.sessions = SS.Session.build([...state.hosts.values()], [...state.logs.values()], [...state.traces.values()])
       .concat([...steamById.values()])
       .filter(s => !state.hidden.has(s.id))
       .sort((a, b) => b.t0 - a.t0);
@@ -584,12 +593,29 @@
       const add = (eps, fill) => eps.forEach(x => { const a = h.t0 + x.t - d.dt / 2; epi.push({ a, b: a + x.dur, fill }); });
       add(d.epsStarve, 'var(--shade-crit)'); add(d.epsGpu, 'var(--shade-warn)'); add(d.epsBusy, 'var(--shade-info)');
     }
+    // Client per-second timeline (Moonlight VRR capture), drawn on the host clock.
+    const pts = (key, scale = 1) => s.clients.filter(c => c.trace).flatMap(c => c.trace.t.map((t, i) => ({ u: c.traceU0 + t, v: c.trace[key][i] == null ? null : c.trace[key][i] * scale })));
+    const hasTrace = s.clients.some(c => c.trace);
+    const clientPanels = hasTrace ? [
+      { label: 'FPS klienta (wyświetlane)', h: 110, minMax: h.target || 60, series: [{ points: pts('pres'), c: 'var(--s-sent)', w: 1.4 }], refLines: [{ v: h.target, c: 'var(--muted)' }] },
+      { label: 'ms klient: odbiór→ekran (P50 / P95)', h: 90, minMax: 20, series: [{ points: pts('lat95'), c: 'var(--warn)', w: 1, dash: '3 3' }, { points: pts('lat50'), c: 'var(--s-sent)', w: 1.3 }] }
+    ] : [];
+    const traceAt = u => {
+      for (const c of s.clients) {
+        if (!c.trace) continue;
+        const i = Math.round(u - c.traceU0);
+        const k = c.trace.t.indexOf(i);
+        if (k >= 0) return `<br>Klient: ${c.trace.pres[k]} kl./s · ${num(c.trace.lat50[k], 1)} ms (P95 ${num(c.trace.lat95[k], 1)})${c.trace.drop[k] ? ` · odrzucone ${c.trace.drop[k]}` : ''}`;
+      }
+      return '';
+    };
     SS.Chart.draw(el, {
       host: h, t0: s.t0, t1: s.t1, range: e, markers: s.markers, events: s.events, episodes: epi, segs: h.segs,
       bands: (h.gameplay || []).map(g => ({ a: g.a, b: g.b, fill: 'var(--ok)' })),
-      fmtAxis: u => fmtU(s, u), axisBase: base0(s),
+      fmtAxis: u => fmtU(s, u), axisBase: base0(s), tipExtra: traceAt,
       panels: [
         { label: 'FPS', h: 150, minMax: h.target || 60, series: [{ get: x => x.actual_fps, c: 'var(--s-fps)', w: 1.6 }], refLines: [{ v: h.target, c: 'var(--muted)' }] },
+        ...clientPanels,
         { label: 'Mb/s', h: 90, series: [{ get: x => (x.actual_bitrate_kbps || 0) / 1000, c: 'var(--s-br)' }], refLines: [{ v: h.reqBitrate ? h.reqBitrate / 1000 : null, c: 'var(--muted)' }] },
         { label: 'ms enk.', h: 80, minMax: 12, series: [{ get: x => x.encode_latency_ms, c: 'var(--s-enc)', skipZero: true }] },
         { label: '% obciążenia', h: 100, max: 100, series: [{ get: x => x.host_cpu_percent, c: 'var(--s-cpu)', w: 1.1 }, { get: x => x.host_gpu_percent, c: 'var(--s-gpu)', w: 1.1 }, { get: x => x.host_gpu_encoder_percent, c: 'var(--s-enc)', w: 1.1 }] }
@@ -658,8 +684,24 @@
     if (!s.clients.length) return `<p class="muted">Brak logu klienta z tej sesji. Dodaj <span class="mono">StreamLight-*.log</span> z klienta.</p>`;
     const list = b.clients.length ? b.clients : s.clients;
     const note = b.clients.length ? '' : '<p class="caveat">Żaden stream klienta nie pokrywa się z wybranym zakresem. Poniżej wszystkie streamy z tej sesji.</p>';
-    return note + `<div class="two">${list.map(c => streamCard(s, c)).join('')}</div>
-      <p class="caveat">Statystyki klienta pochodzą z bloku „Global video stats” i dotyczą całego streamu, nie wybranego zakresu.</p>`;
+    return note + traceRangeHtml(b) + `<div class="two">${list.map(c => streamCard(s, c)).join('')}</div>
+      <p class="caveat">Statystyki w kartach poniżej pochodzą z bloku „Global video stats” i dotyczą całego streamu, nie wybranego zakresu.</p>`;
+  }
+  // Client numbers for the chosen range, from Moonlight's per-frame VRR capture (via the agent).
+  function traceRangeHtml(b) {
+    const T = b.clientTrace;
+    if (!T) return '';
+    return `<div style="display:grid;gap:8px"><h3>Klient w wybranym zakresie <span class="muted small" style="font-weight:400">z diagnostyki VRR Moonlight (klatka po klatce)</span></h3>
+      <div class="stats">
+        ${stat('Wyświetlane FPS', num(T.fpsShown, 2), '', true)}
+        ${stat('Odbierane FPS', num(T.fpsRecv, 2))}
+        ${stat('Wyświetlane P5 / P1', `${num(T.fpsShownP5, 0)} / ${num(T.fpsShownP1, 0)}`, 'kl./s')}
+        ${stat('Odbiór → ekran (P50)', num(T.lat50, 1), 'ms', true)}
+        ${stat('Odbiór → ekran (P95)', num(T.lat95, 1), `ms, najgorsze 5% sekund ${num(T.lat95Worst, 1)}`)}
+        ${stat('Dekodowanie (P50)', num(T.dec50, 2), 'ms')}
+        ${stat('Odrzucone klatki', num(T.dropped, 0), `${num(T.droppedPerMin, 1)}/min`)}
+        ${stat('Pokrycie', tfmt(T.seconds), 'sekund z danymi')}
+      </div></div>`;
   }
   function streamCard(s, c) {
     const st = c.stream, p = st.presentation || {}, x = st.stats || {}, hs = st.hostSnapshot;
@@ -692,6 +734,9 @@
         ${x.smoothness !== undefined ? stat('Smoothness (2m)', x.smoothness == null ? 'zbiera' : num(x.smoothness, 2), x.smoothness == null ? '' : `% / cel ${num(x.smoothnessTarget, 1)}%`) : ''}
         ${x.incomingSmoothness != null ? stat('Incoming smoothness', num(x.incomingSmoothness, 2), '%') : ''}
         ${x.dropped30s != null ? stat('Błąd interwału / drop 30 s', `${x.intervalErrorMs == null ? '—' : num(x.intervalErrorMs, 3)} / ${x.dropped30s}`, 'ms') : ''}
+        ${x.vrrBufferMs != null ? stat('Bufor VRR', num(x.vrrBufferMs, 2), `ms dodane (limit ${num(x.vrrBufferLimitMs, 2)})`) : ''}
+        ${x.gpuDecodeWaitMs != null ? stat('Czekanie na dekoder GPU', num(x.gpuDecodeWaitMs, 2), 'ms') : ''}
+        ${x.skippedPct != null ? stat('Pominięte przed dekodowaniem', num(x.skippedPct, 2), '%') : ''}
         ${x.bitrateEnd != null ? stat('Bitrate z końcówki', `${num(x.bitrateEnd, 1)} / ${num(x.bitratePeak10, 1)}`, 'Mb/s teraz / szczyt 10 s') : ''}
       </div>` : '<p class="muted small">Brak bloku „Global video stats” (stream przerwany albo log ucięty).</p>'}
       ${x.smoothnessNote ? `<p class="caveat">Smoothness: ${esc(x.smoothnessNote)}.</p>` : ''}

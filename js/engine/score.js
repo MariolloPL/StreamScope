@@ -45,7 +45,16 @@ SS.Score = (() => {
     const lowRatio = H.fpsAvg ? H.fpsP1 / H.fpsAvg : null;
     parts.stability = { score: lin(lowRatio, 0.5, 0.9), why: `P1 = ${f(H.fpsP1)} FPS, czyli ${f(lowRatio * 100, 0)}% średniej (P5 ${f(H.fpsP5)}); ≥90% = 10, ≤50% = 1.` };
 
-    if (c && c.netLatency != null) {
+    const T = bench.clientTrace;
+    if (T && T.lat50 != null) {
+      // Range-accurate client side: receive→present (covers decode, queue and render) from the VRR capture.
+      const net = c && c.netLatency != null ? c.netLatency : 1;
+      const total = (H.encAvg || 0) + net + T.lat50;
+      let s = lin(total, 40, 8);
+      const spikes = H.encP95 != null && H.encP95 > 20;
+      if (spikes) s = clamp(s - 1);
+      parts.latency = { score: s, why: `Enkodowanie ${f(H.encAvg, 1)} + sieć ${f(net, 0)} + odbiór→ekran u klienta ${f(T.lat50, 1)} (P50 w zakresie) = ${f(total, 1)} ms; ≤8 ms = 10, ≥40 ms = 1${spikes ? `; −1 za skoki enkodowania (P95 ${f(H.encP95)} ms)` : ''}.` };
+    } else if (c && c.netLatency != null) {
       const total = (H.encAvg || 0) + (c.netLatency || 0) + (c.decodeMs || 0) + (c.queueMs || 0) + (c.renderMs || 0);
       let s = lin(total, 40, 8);
       const spikes = H.encP95 != null && H.encP95 > 20;
@@ -62,9 +71,11 @@ SS.Score = (() => {
     if (H.losses > 0) { s -= 3; pen.push(`${H.losses} strat pakietów −3`); }
     if (H.videoDropped > 0) { s -= 2; pen.push(`${H.videoDropped} dropów wideo −2`); }
     if (c && c.netLossPct) { const p = Math.min(3, c.netLossPct * 20); s -= p; pen.push(`utrata w sieci ${f(c.netLossPct, 2)}% −${f(p, 1)}`); }
-    if (c && c.jitterLossPct) { const p = Math.min(3, c.jitterLossPct * 10); s -= p; pen.push(`utrata przez jitter ${f(c.jitterLossPct, 2)}% −${f(p, 1)}`); }
+    // With a per-frame capture, client-side drops are counted for the range below (not the whole stream).
+    if (c && c.jitterLossPct && !(T && T.dropped != null)) { const p = Math.min(3, c.jitterLossPct * 10); s -= p; pen.push(`utrata przez jitter ${f(c.jitterLossPct, 2)}% −${f(p, 1)}`); }
     if (ev.rfi) { const p = Math.min(2, ev.rfi / hours * 0.1); s -= p; pen.push(`${ev.rfi} RFI (${f(ev.rfi / hours, 1)}/h) −${f(p, 1)}`); }
     if (ev.idr) { const p = Math.min(3, ev.idr / hours * 0.3); s -= p; pen.push(`${ev.idr} IDR u klienta −${f(p, 1)}`); }
+    if (T && T.dropped) { const p = Math.min(2, T.droppedPerMin * 0.2); s -= p; pen.push(`${T.dropped} klatek odrzuconych przez klienta (${f(T.droppedPerMin, 1)}/min) −${f(p, 1)}`); }
     parts.network = { score: clamp(s), why: pen.length ? `10 punktów minus: ${pen.join(', ')}.` : `Brak strat, dropów i zdarzeń odzyskiwania obrazu w zakresie.${c ? '' : ' (Bez logu klienta widać tylko straty zgłoszone hostowi.)'}` };
 
     const h = session.host;

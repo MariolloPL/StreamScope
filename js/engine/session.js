@@ -4,28 +4,43 @@
 SS.Session = (() => {
   const PAIR_WINDOW = 60;   // max |host stream_started − client stream start| (s) to treat them as the same stream
 
-  function build(hostFiles, clientLogs) {
+  // The same stream can be in two logs (Moonlight's own Temp log and the VRR diagnostic capture's copy):
+  // keep one per start/end, preferring the copy that has end-of-stream stats.
+  function uniqueStreams(clientLogs) {
+    const all = [];
+    for (const log of clientLogs) for (const st of log.streams) {
+      const u0 = (log.epoch ?? 0) + st.tStart, u1 = (log.epoch ?? 0) + st.tEnd;
+      all.push({ log, st, u0, u1 });
+    }
+    all.sort((a, b) => (b.st.stats ? 1 : 0) - (a.st.stats ? 1 : 0));
+    const kept = [];
+    for (const x of all) {
+      const dup = x.log.epoch != null && kept.some(k => k.log !== x.log && k.log.epoch != null && Math.abs(k.u0 - x.u0) <= 15 && Math.abs(k.u1 - x.u1) <= 15);
+      if (!dup) kept.push(x);
+    }
+    return kept;
+  }
+
+  function build(hostFiles, clientLogs, traces = []) {
     const sessions = hostFiles.map(h => ({ id: 'h:' + h.key, host: h, clients: [], offset: 0, log: null }));
     const loose = [];
 
-    for (const log of clientLogs) {
-      for (const st of log.streams) {
-        if (log.epoch == null) { loose.push({ log, stream: st, offset: 0 }); continue; }
-        const su = log.epoch + st.tStart;
-        let best = null;
-        for (const s of sessions) {
-          for (const g of s.host.segs) {
-            const d = g.t0 - su;
-            if (Math.abs(d) <= PAIR_WINDOW && (!best || Math.abs(d) < Math.abs(best.d))) best = { s, d, exact: true };
-          }
+    for (const { log, st } of uniqueStreams(clientLogs)) {
+      if (log.epoch == null) { loose.push({ log, stream: st, offset: 0 }); continue; }
+      const su = log.epoch + st.tStart;
+      let best = null;
+      for (const s of sessions) {
+        for (const g of s.host.segs) {
+          const d = g.t0 - su;
+          if (Math.abs(d) <= PAIR_WINDOW && (!best || Math.abs(d) < Math.abs(best.d))) best = { s, d, exact: true };
         }
-        if (!best) {
-          const s = sessions.find(x => su >= x.host.t0 - 30 && su <= x.host.tEnd + 30);
-          if (s) best = { s, d: 0, exact: false };
-        }
-        if (best) best.s.clients.push({ log, stream: st, offset: best.d, exact: best.exact });
-        else loose.push({ log, stream: st, offset: 0 });
       }
+      if (!best) {
+        const s = sessions.find(x => su >= x.host.t0 - 30 && su <= x.host.tEnd + 30);
+        if (s) best = { s, d: 0, exact: false };
+      }
+      if (best) best.s.clients.push({ log, stream: st, offset: best.d, exact: best.exact });
+      else loose.push({ log, stream: st, offset: 0 });
     }
 
     for (const s of sessions) {
@@ -40,11 +55,11 @@ SS.Session = (() => {
     for (const c of loose) {
       sessions.push({ id: `c:${c.log.key}#${c.stream.index}`, host: null, clients: [c], offset: 0, log: c.log });
     }
-    sessions.forEach(finish);
+    sessions.forEach(s => finish(s, traces));
     return sessions.sort((a, b) => b.t0 - a.t0);
   }
 
-  function finish(s) {
+  function finish(s, traces = []) {
     // clientBase = host-clock unix time of "00:00:00" in the session's client log.
     s.clientBase = s.log && s.log.epoch != null ? s.log.epoch + s.offset : null;
     const cu = c => (c.log.epoch ?? 0) + (c.log === s.log ? s.offset : c.offset);
@@ -55,6 +70,12 @@ SS.Session = (() => {
     for (const c of s.clients) {
       const base = cu(c);
       c.u0 = base + c.stream.tStart; c.u1 = base + c.stream.tEnd;
+      // Per-second client timeline (Moonlight VRR capture), matched by time in the client's own clock.
+      if (c.log.epoch != null) {
+        const cu0 = c.log.epoch + c.stream.tStart, cu1 = c.log.epoch + c.stream.tEnd;
+        const tr = traces.find(t => t.first_frame_unix >= cu0 - 30 && t.first_frame_unix <= cu1);
+        if (tr) { c.trace = tr; c.traceU0 = tr.first_frame_unix + (base - c.log.epoch); }
+      }
       c.stream.markers.forEach(m => s.markers.push({ ...m, u: base + m.t, logT: m.t, log: c.log }));
       c.stream.events.forEach(e => s.events.push({ ...e, u: base + e.t }));
     }
@@ -125,15 +146,39 @@ SS.Benchmark = (() => {
     };
   }
 
+  // Client side in range from the per-second VRR-capture timeline: displayed FPS, drops, latency.
+  function trace(c, a, b) {
+    const T = c.trace;
+    let secs = 0, pres = 0, rx = 0, drop = 0;
+    const presPerSec = [], lat50 = [], lat95 = [], dec50 = [];
+    for (let i = 0; i < T.t.length; i++) {
+      const u = c.traceU0 + T.t[i];
+      if (u < a || u > b) continue;
+      secs++; pres += T.pres[i]; rx += T.rx[i]; drop += T.drop[i];
+      presPerSec.push(T.pres[i]);
+      if (T.lat50[i] != null) lat50.push(T.lat50[i]);
+      if (T.lat95[i] != null) lat95.push(T.lat95[i]);
+      if (T.dec50[i] != null) dec50.push(T.dec50[i]);
+    }
+    if (secs < 2) return null;
+    return {
+      seconds: secs, fpsShown: pres / secs, fpsRecv: rx / secs, fpsShownP5: quantile(presPerSec, 0.05), fpsShownP1: quantile(presPerSec, 0.01),
+      dropped: drop, droppedPerMin: drop / (secs / 60),
+      lat50: SS.stats.median(lat50), lat95: SS.stats.median(lat95), lat95Worst: quantile(lat95, 0.95), dec50: SS.stats.median(dec50)
+    };
+  }
+
   function compute(session, a, b) {
     const clients = session.clients.filter(c => c.u1 >= a && c.u0 <= b);
     const inRange = e => e.u >= a && e.u <= b;
     const ev = session.events.filter(inRange);
     const countOf = type => ev.filter(e => e.type === type).length;
+    const withTrace = clients.filter(c => c.trace).sort((x, y) => (y.u1 - y.u0) - (x.u1 - x.u0))[0];
     return {
       a, b, dur: b - a,
       host: session.host ? host(session.host, a, b) : null,
       clients,
+      clientTrace: withTrace ? trace(withTrace, a, b) : null,
       clientEvents: { rfi: countOf('rfi'), idr: countOf('idr'), overflow: countOf('overflow') }
     };
   }

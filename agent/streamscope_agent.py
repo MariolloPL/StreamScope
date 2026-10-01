@@ -66,7 +66,7 @@ def load_config():
 # ---------------------------------------------------------------- archive
 
 class Archive:
-    SUBDIRS = ("vibepollo", "steam", "client", "manual")
+    SUBDIRS = ("vibepollo", "steam", "client", "trace", "manual")
 
     def __init__(self, root):
         self.root = root
@@ -194,6 +194,156 @@ def collect_client(cfg, arc, status):
         status.set("client", False, "; ".join(errors[:3]), copied=copied)
     else:
         status.set("client", True, f"OK, skopiowano {copied}" if copied else "OK, bez zmian")
+
+
+# ---------------------------------------------------------------- Moonlight VRR diagnostic captures
+
+def read_vrrtrace_rows(path):
+    """Yield CSV rows (lists) from a Moonlight .vrrtrace: 'MLVRR1\\n' + blocks of
+    [u32 LE length][Qt qCompress blob = u32 BE raw size + zlib stream] holding CSV text."""
+    import csv, io, struct, zlib
+    with open(path, "rb") as f:
+        if f.read(7) != b"MLVRR1\n":
+            raise ValueError("not a vrrtrace file")
+        tail = ""
+        while True:
+            h = f.read(4)
+            if len(h) < 4:
+                break
+            blob = f.read(struct.unpack("<I", h)[0])
+            text = tail + zlib.decompress(blob[4:]).decode("utf-8", "replace")
+            # Blocks may split a line; keep the unfinished end for the next block.
+            cut = text.rfind("\n")
+            tail = text[cut + 1:]
+            yield from csv.reader(io.StringIO(text[:cut + 1]))
+        if tail:
+            yield from csv.reader(io.StringIO(tail))
+
+
+def summarize_trace(paths, first_frame_unix):
+    """Per-second client timeline from per-frame rows: frames received/presented/dropped, receive→present
+    latency (p50/p95) and decode time. Trace clocks are monotonic µs; second 0 = first received frame."""
+    per = {}
+    lat_all, dec_all = [], []
+    tot = {"frames": 0, "presented": 0, "dropped": 0}
+    first = None
+    footer_ok = True
+    for p in paths:
+        idx = None
+        for r in read_vrrtrace_rows(p):
+            if not r:
+                continue
+            if r[0].startswith("#"):
+                footer_ok = footer_ok and "rows_dropped=0" in ",".join(r)
+                continue
+            if r[0] == "trace_schema":
+                idx = {k: i for i, k in enumerate(r)}
+                continue
+            if idx is None:
+                continue
+            g = lambda k: r[idx[k]] if k in idx and idx[k] < len(r) else ""
+            rx = g("frame_receive_us")
+            if not rx:
+                continue
+            rx = int(rx)
+            if first is None or rx < first:
+                first = rx
+            b = per.setdefault(rx // 1_000_000, {"rx": 0, "pres": 0, "drop": 0, "lat": [], "dec": []})
+            b["rx"] += 1
+            tot["frames"] += 1
+            pe = g("present_end_us")
+            if pe and pe != "0":
+                lat = (int(pe) - rx) / 1000.0
+                if 0 <= lat < 1000:
+                    b["pres"] += 1; b["lat"].append(lat); lat_all.append(lat); tot["presented"] += 1
+            if g("dropped") not in ("", "0"):
+                b["drop"] += 1; tot["dropped"] += 1
+            ds, dc = g("decode_submit_us"), g("decode_complete_us")
+            if ds and dc and ds != "0" and dc != "0":
+                d = (int(dc) - int(ds)) / 1000.0
+                if 0 <= d < 500:
+                    b["dec"].append(d); dec_all.append(d)
+    if first is None:
+        return None
+    def pct(a, p):
+        if not a:
+            return None
+        a = sorted(a)
+        return round(a[min(len(a) - 1, int(p * (len(a) - 1)))], 2)
+    base = first // 1_000_000
+    secs = sorted(per)
+    return {
+        "first_frame_unix": first_frame_unix,
+        "t": [s - base for s in secs],
+        "rx": [per[s]["rx"] for s in secs],
+        "pres": [per[s]["pres"] for s in secs],
+        "drop": [per[s]["drop"] for s in secs],
+        "lat50": [pct(per[s]["lat"], 0.5) for s in secs],
+        "lat95": [pct(per[s]["lat"], 0.95) for s in secs],
+        "dec50": [pct(per[s]["dec"], 0.5) for s in secs],
+        "totals": {**tot, "lat50": pct(lat_all, 0.5), "lat95": pct(lat_all, 0.95), "lat99": pct(lat_all, 0.99),
+                   "dec50": pct(dec_all, 0.5), "seconds": len(secs), "complete": footer_ok},
+    }
+
+
+def _log_seconds(line):
+    m = re.match(r"(\d+):(\d\d):(\d\d) - ", line)
+    return int(m[1]) * 3600 + int(m[2]) * 60 + int(m[3]) if m else None
+
+
+def collect_vrr(cfg, arc, status, state):
+    """Moonlight 'VRR diagnostic capture' folders: <dir>/capture-info.json, Moonlight.log, *.vrrtrace.
+    Finished captures become client/Moonlight-<epoch>.log (same format as Temp logs, so pairing with
+    Vibepollo works unchanged) plus trace/Moonlight-<epoch>.json (per-second client timeline)."""
+    dirs = cfg.get("vrr_dirs") or []
+    if not dirs:
+        return
+    done = state.setdefault("vrr_captures", {})
+    new, errors = 0, []
+    for root in dirs:
+        try:
+            entries = os.listdir(root)
+        except OSError as e:
+            errors.append(f"{root}: {e.strerror or e}")
+            continue
+        for name in entries:
+            cap = os.path.join(root, name)
+            info_p = os.path.join(cap, "capture-info.json")
+            if not os.path.isfile(info_p):
+                continue
+            try:
+                with open(info_p, encoding="utf-8-sig") as f:
+                    info = json.load(f)
+                if not info.get("finished_utc"):
+                    continue                      # still streaming: the capture is finalised at the end
+                traces = sorted(os.path.join(cap, n) for n in os.listdir(cap) if n.endswith(".vrrtrace"))
+                sig = f"{info['finished_utc']}|{sum(os.path.getsize(t) for t in traces)}"
+                if done.get(name) == sig:
+                    continue
+                with open(os.path.join(cap, "Moonlight.log"), encoding="utf-8", errors="replace") as f:
+                    log_text = f.read()
+                lines = log_text.splitlines()
+                started = datetime.fromisoformat(info["started_utc"].replace("Z", "+00:00")).timestamp()
+                t_cap = next((_log_seconds(l) for l in lines if "VRR diagnostic capture" in l), None)
+                t_cap = t_cap if t_cap is not None else next((_log_seconds(l) for l in lines if _log_seconds(l) is not None), 0)
+                epoch = int(round(started - t_cap))   # unix time of log 00:00:00, like Moonlight-<unix>.log names
+                t_video = next((_log_seconds(l) for l in lines if "Video stream is" in l or "Received first video packet" in l), t_cap)
+                summary = summarize_trace(traces, epoch + t_video) if traces else None
+                # Captures from one Moonlight run share (almost) the same epoch: the capture id keeps names unique.
+                base = f"Moonlight-{epoch}-vrr-{name.split('-')[3] if name.count('-') >= 3 else name[-8:]}"
+                arc.write("client", base + ".log", log_text.encode("utf-8"))
+                if summary:
+                    summary.update(schema="streamscope-client-trace", version=1, log=base + ".log", capture=info)
+                    arc.write("trace", base + ".json", json.dumps(summary, separators=(",", ":")).encode("utf-8"))
+                done[name] = sig
+                new += 1
+                log.info("vrr capture %s -> %s (%s frames)", name, base, summary["totals"]["frames"] if summary else 0)
+            except (OSError, ValueError, KeyError) as e:
+                errors.append(f"{name}: {e}")
+    if errors:
+        status.set("vrr", False, "; ".join(errors[:2]))
+    else:
+        status.set("vrr", True, f"OK, nowe sesje: {new}" if new else "OK, bez zmian")
 
 
 class Vibepollo:
@@ -477,13 +627,14 @@ class Collector(threading.Thread):
             with self.status.lock:
                 self.status.data["running"] = True
             # Quick local sources first, so a slow Vibepollo download never delays Steam/K12 logs.
-            for name, fn, section in (("steam", collect_steam, "steam"), ("client", collect_client, "client_logs"), ("vibepollo", collect_vibepollo, "vibepollo")):
+            for name, fn, section in (("steam", collect_steam, "steam"), ("client", collect_client, "client_logs"),
+                                      ("vrr", collect_vrr, "client_logs"), ("vibepollo", collect_vibepollo, "vibepollo")):
                 c = self.cfg[section]
                 if not c.get("enabled", True):
                     self.status.set(name, True, "wyłączone")
                     continue
                 try:
-                    if name == "vibepollo":
+                    if name in ("vibepollo", "vrr"):
                         fn(c, self.arc, self.status, self.state)
                     else:
                         fn(c, self.arc, self.status)
@@ -502,6 +653,8 @@ class Collector(threading.Thread):
         with self.lock:
             try:
                 collect_client(self.cfg["client_logs"], self.arc, self.status)
+                collect_vrr(self.cfg["client_logs"], self.arc, self.status, self.state)
+                self.arc.write_doc("agent_state.json", self.state)
             except Exception as e:
                 log.exception("client collection failed")
                 self.status.set("client", False, f"błąd: {e}")
@@ -515,9 +668,10 @@ class ShareWatcher(threading.Thread):
     SETTLE = 20       # s after the first change before copying: lets StreamLight finish writing
     RETRY = 300       # s before reopening the watch when the share is unreachable (K12 off / asleep)
 
-    def __init__(self, path, collector, status):
+    def __init__(self, path, collector, status, key="watch"):
         super().__init__(daemon=True)
-        self.path, self.collector, self.status = path, collector, status
+        self.path, self.collector, self.status, self.key = path, collector, status, key
+        self.subtree = key == "vrr_watch"     # captures live in subfolders
         self.timer = None
         self.timer_lock = threading.Lock()
 
@@ -550,17 +704,17 @@ class ShareWatcher(threading.Thread):
         while True:
             h = k32.CreateFileW(self.path, FILE_LIST_DIRECTORY, SHARE_ALL, None, OPEN_EXISTING, BACKUP_SEMANTICS, None)
             if h in (None, INVALID):
-                self.status.set("watch", False, f"nie mogę obserwować {self.path} (K12 wyłączony?), ponowię za {self.RETRY // 60} min")
+                self.status.set(self.key, False, f"nie mogę obserwować {self.path} (K12 wyłączony?), ponowię za {self.RETRY // 60} min")
                 time.sleep(self.RETRY)
                 continue
-            self.status.set("watch", True, "obserwuję folder K12, nowe logi dochodzą same")
+            self.status.set(self.key, True, "obserwuję folder K12, nowe logi dochodzą same" if self.key == "watch" else "obserwuję folder diagnostyki VRR")
             self._changed()                   # catch up on anything written while we were not watching
             try:
-                while k32.ReadDirectoryChangesW(h, buf, len(buf), False, NOTIFY, ctypes.byref(got), None, None):
+                while k32.ReadDirectoryChangesW(h, buf, len(buf), self.subtree, NOTIFY, ctypes.byref(got), None, None):
                     self._changed()
             finally:
                 k32.CloseHandle(h)
-            self.status.set("watch", False, f"przerwana obserwacja {self.path}, ponowię za {self.RETRY // 60} min")
+            self.status.set(self.key, False, f"przerwana obserwacja {self.path}, ponowię za {self.RETRY // 60} min")
             time.sleep(self.RETRY)
 
 
@@ -709,6 +863,8 @@ def main():
     if cfg["client_logs"].get("enabled", True):
         for d in cfg["client_logs"].get("dirs") or []:
             ShareWatcher(d, collector, status).start()
+        for d in cfg["client_logs"].get("vrr_dirs") or []:
+            ShareWatcher(d, collector, status, key="vrr_watch").start()
     ip = lan_ip()
     log.info("StreamScope Agent %s: http://%s:%s/  (archiwum: %s)", VERSION, ip, cfg["port"], arc.root)
     srv.serve_forever()
