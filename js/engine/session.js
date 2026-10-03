@@ -169,6 +169,8 @@ SS.Benchmark = (() => {
       pct90: share(90), pct100: share(100),
       bitrateAvg: mean(br), bitrateP95: quantile(br, 0.95),
       encAvg: mean(enc), encP50: quantile(enc, 0.5), encP95: quantile(enc, 0.95), encMax: max(enc), encOver2Pct,
+      // What actually left the host's network card (all traffic, Mb/s), next to the stream's own bitrate.
+      netTxAvg: W.some(s => s.host_net_tx_bps > 0) ? mean(W.map(s => (+s.host_net_tx_bps || 0) / 1e6)) : null,
       cpuAvg: mean(W.map(s => +s.host_cpu_percent || 0)), gpuAvg: mean(W.map(s => +s.host_gpu_percent || 0)),
       gpuEncAvg: mean(W.map(s => +s.host_gpu_encoder_percent || 0)), gpuTempMax: max(W.map(s => +s.host_gpu_temp_c || 0)),
       losses: counterSum(W, 'client_reported_losses'), videoDropped: counterSum(W, 'video_dropped'),

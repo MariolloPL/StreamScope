@@ -73,6 +73,10 @@ SS.Chart = (() => {
         svg += `<path d="${d}" fill="none" stroke="${se.c}" stroke-width="${se.w || 1.3}" stroke-linejoin="round" stroke-linecap="round"/>`;
       });
 
+      // Connection labels (S1 · codec mode) next to each reconnect line, top of the first panel.
+      if (pi === 0) (opts.segLabels || []).forEach(sl => {
+        svg += `<text x="${(x(sl.u) + 4).toFixed(1)}" y="${top + 24}" font-size="10.5" font-family="${MONO}" fill="var(--muted)">${sl.label.replace(/[<&]/g, '')}</text>`;
+      });
       // Detected gameplay as a strip along the bottom of the first panel.
       if (pi === 0) (opts.bands || []).forEach(bd => { svg += rect(bd.a, bd.b, top + p.h - 5, 5, bd.fill, ' opacity=".8"'); });
       // Client events as ticks along the top of the first panel.

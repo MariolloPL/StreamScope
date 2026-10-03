@@ -343,6 +343,8 @@
   }
 
   // ---------- Steam Remote Play ----------
+  // PyroWave encodes with GPU compute, so the NVENC encoder utilisation says nothing about it.
+  const isPyro = s => /pyro/i.test((s.host && s.host.codec) || '') || (s.clients || []).some(c => /pyro/i.test(c.stream.codec || '')) || !!(s.steam && (s.steam.segments.at(-1) || {}).pyrowave);
   const shortEnc = e => (e || '?').replace(/\s*\[.*\]$/, '').replace(/^Pyrowave\b/i, 'PyroWave');
   // Default benchmark set: game-capture segments of meaningful length (desktop/menu segments skew FPS).
   function steamSelection(s) {
@@ -509,7 +511,8 @@
       shown: T ? T.fpsShown : c && c.rendering, clientLat: T ? T.lat50 : null, clientLat95: T ? T.lat95 : null,
       drops: T && T.lostPct != null ? T.lostPct + T.dropped / Math.max(1, T.fpsRecv * T.seconds) * 100 : ST ? ST.dropPct : c ? (c.netLossPct || 0) + (c.jitterLossPct || 0) : null,
       rtt: ST ? ST.rttAvg : c && c.netLatency, late: ST ? ST.latePct : H && H.encOver2Pct, pacing: c && c.smoothness,
-      gpuEnc: H && H.gpuEncAvg, cpu: H && H.cpuAvg } };
+      gpuEnc: H && !isPyro(s) ? H.gpuEncAvg : null, cpu: H && H.cpuAvg, netTx: H && H.netTxAvg,
+      targetBitrate: s.host && s.host.reqBitrate ? s.host.reqBitrate / 1000 : ST && ST.targetBitrate } };
   }
 
   const CMP_METRICS = [
@@ -517,7 +520,8 @@
     ['Enkodowanie (Vibepollo)', 'encode', 2, 'ms'], ['Opóźnienie hosta (StreamTweak)', 'hostLat', 2, 'ms'],
     ['Odbiór → ekran u klienta P50', 'clientLat', 1, 'ms'], ['Odbiór → ekran u klienta P95', 'clientLat95', 1, 'ms'],
     ['Straty / dropy klatek', 'drops', 2, '%'], ['RTT / ping', 'rtt', 1, 'ms'], ['Spóźnione klatki', 'late', 2, '%'],
-    ['Płynność u klienta', 'pacing', 2, '%'], ['Bitrate', 'bitrate', 0, 'Mb/s'], ['Enkoder GPU', 'gpuEnc', 0, '%'], ['CPU hosta', 'cpu', 0, '%']
+    ['Płynność u klienta', 'pacing', 2, '%'], ['Bitrate docelowy', 'targetBitrate', 0, 'Mb/s'], ['Bitrate wysyłany', 'bitrate', 0, 'Mb/s'],
+    ['Net TX hosta', 'netTx', 0, 'Mb/s'], ['Enkoder GPU (n/d przy PyroWave)', 'gpuEnc', 0, '%'], ['CPU hosta', 'cpu', 0, '%']
   ];
 
   function renderSideBySide() {
@@ -556,7 +560,7 @@
     box.innerHTML = `<div class="panel-head"><h2>Porównanie sesji</h2><div class="actions"><button class="small" type="button" id="cmpSwap">Zamień A ↔ B</button><button class="small" type="button" id="cmpClose">Zamknij</button></div></div>
       <div class="two">${head(va)}${head(vb)}</div>
       <div class="tablewrap"><table><thead><tr><th>Metryka</th><th class="num">A</th><th class="num">B</th><th class="num">Różnica B − A</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <div class="legend"><span><i style="background:var(--s-fps)"></i>A: ${esc(va.s.app)} ${shortDate(va.s.t0)}</span><span><i style="background:var(--s-enc)"></i>B: ${esc(vb.s.app)} ${shortDate(vb.s.t0)}</span><span class="muted">oś czasu: od początku zakresu każdej sesji</span></div>
+      <div class="legend"><span><i style="background:var(--s-fps)"></i>A: ${esc(va.s.app)} ${shortDate(va.s.t0)}</span><span><i style="background:repeating-linear-gradient(90deg,var(--s-enc) 0 5px,transparent 5px 8px)"></i>B (przerywana): ${esc(vb.s.app)} ${shortDate(vb.s.t0)}</span><span class="muted">oś czasu: od początku zakresu każdej sesji</span></div>
       <div class="chart" id="cmpChart"></div>
       <p class="caveat">Obie sesje liczone w swoich aktualnych zakresach (domyślnie wykryta rozgrywka). Różnica to tylko liczby; StreamScope nie wskazuje zwycięzcy. Porównuj podobne fragmenty gry (ta sama mapa, podobna długość).</p>`;
     $('#cmpClose').onclick = () => { state.compareWith = null; renderSideBySide(); };
@@ -564,7 +568,7 @@
     const panel = (label, key, h, extra = {}) => {
       const sa = va.series[key], sb = vb.series[key];
       if (!(sa && sa.length) && !(sb && sb.length)) return null;
-      return { label, h, series: [{ points: sa || [], c: 'var(--s-fps)', w: 1.4 }, { points: sb || [], c: 'var(--s-enc)', w: 1.4 }], ...extra };
+      return { label, h, series: [{ points: sa || [], c: 'var(--s-fps)', w: 1.4 }, { points: sb || [], c: 'var(--s-enc)', w: 1.4, dash: '6 4' }], ...extra };
     };
     const panels = [
       panel('FPS hosta', 'fps', 130, { minMax: 60 }), panel('Wyświetlane FPS u klienta', 'shown', 110, { minMax: 60 }),
@@ -760,6 +764,20 @@
     return hl == null && rtt == null ? '' : `<br>StreamTweak: host ${num(hl, 1)} ms · RTT ${num(rtt, 1)} ms${dr ? ` · dropy ${num(dr, 1)}/s` : ''}`;
   };
 
+  // Reconnects labelled on the chart: "S2 · PyroWave 2560×1440@116", taken from the client stream that
+  // started with that connection (settings changes create a new connection), else the host file.
+  function segLabels(s) {
+    const segs = s.host ? s.host.segs : [];
+    if (segs.length < 2) return [];
+    return segs.map((g, i) => {
+      const c = s.clients.find(x => Math.abs(x.u0 - g.t0) <= 60);
+      const st = c && c.stream;
+      const codec = (st && st.codec) || s.host.codec || '';
+      const mode = st && st.width ? `${st.width}×${st.height}@${st.fps}` : '';
+      return { u: g.t0, label: `S${i + 1} · ${codec}${mode ? ' ' + mode : ''}` };
+    });
+  }
+
   function drawChart(s, e) {
     const el = $('#dChart'); if (!el) return;
     if (!s.host) {
@@ -796,7 +814,7 @@
     };
     SS.Chart.draw(el, {
       host: h, t0: s.t0, t1: s.t1, range: e, markers: s.markers, events: s.events, episodes: epi, segs: h.segs,
-      bands: (h.gameplay || []).map(g => ({ a: g.a, b: g.b, fill: 'var(--ok)' })),
+      bands: (h.gameplay || []).map(g => ({ a: g.a, b: g.b, fill: 'var(--ok)' })), segLabels: segLabels(s),
       fmtAxis: u => fmtU(s, u), axisBase: base0(s), tipExtra: u => traceAt(u) + stAt(s, u),
       panels: [
         { label: 'FPS', h: 150, minMax: h.target || 60, series: [{ get: x => x.actual_fps, c: 'var(--s-fps)', w: 1.6 }], refLines: [{ v: h.target, c: 'var(--muted)' }] },
@@ -835,9 +853,9 @@
         <div class="scores">${graded.map(k => scoreTile(k, sc.parts[k])).join('')}</div>
       </div>
     </div>
-    ${info.length ? `<details><summary class="small" style="font-size:14px">Informacyjnie, bez wpływu na ocenę: ${info.map(k => `${SS.Score.LABELS[k]} ${sc.parts[k].score == null ? 'n/d' : num(sc.parts[k].score, 1)}`).join(' · ')}</summary>
-      <div class="scores" style="margin-top:8px">${info.map(k => scoreTile(k, sc.parts[k])).join('')}</div></details>` : ''}
-    <p class="caveat">Ocena = średnia testów, ale najwyżej 1,5 pkt powyżej najsłabszego. Opóźnienia liczone w okresach klatki, FPS poza oceną (jak w StreamTweak); każdy test podaje źródło danych. Liczona dla wybranego zakresu.</p>`;
+    ${info.length ? `<div style="display:grid;gap:6px"><div><b>Wydajność gry i hosta</b> <span class="muted small">· osobno, bez wpływu na werdykt (limit gry i ekrany ładowania to nie problem streamu)</span></div>
+      <div class="scores">${info.map(k => scoreTile(k, sc.parts[k])).join('')}</div></div>` : ''}
+    <p class="caveat">Werdykt ocenia zdrowie streamu. Ocena = średnia testów, ale najwyżej 1,5 pkt powyżej najsłabszego. Opóźnienia liczone w okresach klatki, FPS poza oceną (jak w StreamTweak); każdy test podaje źródło danych. Liczona dla wybranego zakresu.</p>`;
   }
 
   const stat = (k, v, unit, hl) => `<div class="stat${hl ? ' hl' : ''}"><span class="k">${k}</span><span class="v">${v}${unit ? ` <small>${unit}</small>` : ''}</span></div>`;
@@ -865,6 +883,7 @@
     if (!H) return `<p class="muted">W wybranym zakresie jest mniej niż 2 próbki hosta. Poszerz zakres.</p>`;
     const ev = b.clientEvents;
     const target = s.host.target;
+    const pyro = isPyro(s);
     return scoreHtml(SS.Score.vibepollo(s, b)) + `<div class="stats">
       ${stat('Śr. FPS', num(H.fpsAvg, 2), target ? '/ ' + target : '', true)}
       ${stat('P50 (mediana)', num(H.fpsP50, 1), '', true)}
@@ -874,10 +893,11 @@
       ${stat('FPS ≥ 90', num(H.pct90, 1), '% czasu')}
       ${stat('FPS ≥ 100', num(H.pct100, 1), '% czasu')}
       ${stat('Bitrate śr. / P95', `${num(H.bitrateAvg, 1)} / ${num(H.bitrateP95, 1)}`, 'Mb/s')}
+      ${stat('Bitrate docelowy / wysyłany / Net TX', `${num(s.host.reqBitrate ? s.host.reqBitrate / 1000 : null, 0)} / ${num(H.bitrateAvg, 0)} / ${num(H.netTxAvg, 0)}`, 'Mb/s (Net TX: cały ruch karty sieciowej hosta)')}
       ${stat('Enkodowanie śr.', num(H.encAvg, 2), 'ms')}
       ${stat('Enkodowanie P50 / P95', `${num(H.encP50, 1)} / ${num(H.encP95, 1)}`, 'ms')}
       ${stat('Enkodowanie max', num(H.encMax, 1), 'ms')}
-      ${stat('GPU / enkoder śr.', `${num(H.gpuAvg, 0)} / ${num(H.gpuEncAvg, 0)}`, '%')}
+      ${stat('GPU / enkoder śr.', `${num(H.gpuAvg, 0)} / ${pyro ? 'n/d' : num(H.gpuEncAvg, 0)}`, pyro ? '% (PyroWave liczy na GPU, nie na enkoderze NVENC)' : '%')}
       ${stat('CPU hosta śr.', num(H.cpuAvg, 0), '%')}
       ${stat('Temp. GPU max', num(H.gpuTempMax, 0), '°C')}
       ${stat('Straty / dropy wideo', `${H.losses} / ${H.videoDropped}`)}

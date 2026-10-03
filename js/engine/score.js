@@ -145,8 +145,11 @@ SS.Score = (() => {
     else if (ST && ST.fpsAvg) sig.fpsAvg = ST.fpsAvg;
     if (H && h) sig.image = imageInfo(H.bitrateAvg, h.width, h.height, H.fpsAvg, h.codec);
     if (H) {
-      const peak = Math.max(H.gpuAvg || 0, H.gpuEncAvg || 0, H.cpuAvg || 0);
-      sig.headroom = { score: curve(peak, [[60, 10], [98, 1]]), why: `Najbardziej obciążony: ${peak === H.cpuAvg ? 'CPU' : peak === H.gpuEncAvg ? 'enkoder GPU' : 'GPU'} średnio ${f(peak, 0)}% (GPU ${f(H.gpuAvg, 0)}%, enkoder ${f(H.gpuEncAvg, 0)}%, CPU ${f(H.cpuAvg, 0)}%).` };
+      // PyroWave runs on GPU compute: the NVENC encoder figure is meaningless there.
+      const pyro = /pyro/i.test((h && h.codec) || '');
+      const enc = pyro ? 0 : (H.gpuEncAvg || 0);
+      const peak = Math.max(H.gpuAvg || 0, enc, H.cpuAvg || 0);
+      sig.headroom = { score: curve(peak, [[60, 10], [98, 1]]), why: `Najbardziej obciążony: ${peak === H.cpuAvg ? 'CPU' : peak === enc ? 'enkoder GPU' : 'GPU'} średnio ${f(peak, 0)}% (GPU ${f(H.gpuAvg, 0)}%, enkoder ${pyro ? 'n/d przy PyroWave' : f(H.gpuEncAvg, 0) + '%'}, CPU ${f(H.cpuAvg, 0)}%).` };
     }
     return build(sig);
   }
