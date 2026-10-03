@@ -205,14 +205,15 @@ SS.Benchmark = (() => {
   }
 
   // StreamTweak telemetry (StreamLight client + host) inside the range, from its ~600-point series.
-  function streamtweak(stS, a, b) {
+  function streamtweak(stS, a, b, fpsHint) {
     const pick = key => (stS.series[key] || []).filter(p => p.u >= a && p.u <= b).map(p => p.v);
     const rtt = pick('rtt').filter(v => v > 0), drops = pick('drops'), hl = pick('hostLat').filter(v => v > 0);
     const dec = pick('decode'), br = pick('bitrate');
     const seconds = Math.min(b, stS.u1) - Math.max(a, stS.u0);
     if (seconds < 10) return null;
     const q = stS.stats || {};
-    const fps = q.FpsAvg || null;
+    // Drop % against the frame rate inside the range (the session average includes menus and loading).
+    const fps = fpsHint || q.FpsAvg || null;
     // Drops series = dropped frames per client report (~1 per second).
     const dropsPerSec = drops.length ? mean(drops) : null;
     return {
@@ -233,12 +234,13 @@ SS.Benchmark = (() => {
     const ev = session.events.filter(inRange);
     const countOf = type => ev.filter(e => e.type === type).length;
     const withTrace = clients.filter(c => c.trace).sort((x, y) => (y.u1 - y.u0) - (x.u1 - x.u0))[0];
+    const H = session.host ? host(session.host, a, b) : null;
     return {
       a, b, dur: b - a,
-      host: session.host ? host(session.host, a, b) : null,
+      host: H,
       clients,
       clientTrace: withTrace ? trace(withTrace, a, b) : null,
-      st: session.st ? streamtweak(session.st, a, b) : null,
+      st: session.st ? streamtweak(session.st, a, b, H ? (H.fpsAvgActive ?? H.fpsAvg) : null) : null,
       clientEvents: { rfi: countOf('rfi'), idr: countOf('idr'), overflow: countOf('overflow') }
     };
   }
