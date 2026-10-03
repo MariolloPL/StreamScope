@@ -9,6 +9,7 @@ const Engine = (() => {
   const pct = (a, p) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(s.length * p))]; };
   const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
   const max = a => a.length ? Math.max(...a) : null;
+  const eps = n => `${n} ${n === 1 ? 'epizod' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'epizody' : 'epizodów'}`;
 
   function parse(name, text) {
     const d = JSON.parse(text);
@@ -138,21 +139,21 @@ const Engine = (() => {
       const long = epsStarve.filter(e => e.dur >= 6);
       const desync = epsStarve.some(e => e.idr > 0 || e.ref > 20);
       const earlyN = epsStarve.filter(e => e.early).length;
-      findings.push({ sev: starveLateSec >= 6 ? 'crit' : 'warn', title: 'Brak klatek do wysłania', text: `${epsStarve.length} epizod(ów), łącznie ~${Math.round(starveSec)} s${long.length ? `, najdłuższy ${Math.round(Math.max(...long.map(e => e.dur)))} s` : ''}.${earlyN ? ` ${earlyN === epsStarve.length ? 'Wszystkie' : earlyN} na początku sesji, gdy zwykle trwa jeszcze nawigacja po menu — te traktuj ostrożnie.` : ''} FPS spada przy niskim CPU/GPU hosta i niskim obciążeniu enkodera — coś przed enkoderem przestaje dostarczać klatki (przechwytywanie obrazu, proces w tle).${desync ? ' W trakcie rosną idr_requests/ref_invalidations, czyli strumień faktycznie się rozsynchronizował.' : ''} Uwaga: w menu i na statycznym pulpicie ta sama sygnatura bywa normalna, bo host nie ma czego wysyłać.` });
+      findings.push({ sev: starveLateSec >= 6 ? 'crit' : 'warn', title: 'Brak klatek do wysłania', text: `${eps(epsStarve.length)}, łącznie ~${Math.round(starveSec)} s${long.length ? `, najdłuższy ${Math.round(Math.max(...long.map(e => e.dur)))} s` : ''}.${earlyN ? ` ${earlyN === epsStarve.length ? 'Wszystkie' : earlyN} na początku sesji, gdy zwykle trwa jeszcze nawigacja po menu — te traktuj ostrożnie.` : ''} FPS spada przy niskim CPU/GPU hosta i niskim obciążeniu enkodera — coś przed enkoderem przestaje dostarczać klatki (przechwytywanie obrazu, proces w tle).${desync ? ' W trakcie rosną idr_requests/ref_invalidations, czyli strumień faktycznie się rozsynchronizował.' : ''} Uwaga: w menu i na statycznym pulpicie ta sama sygnatura bywa normalna, bo host nie ma czego wysyłać.` });
     }
-    if (epsGpu.length) findings.push({ sev: gpuSec >= 6 ? 'crit' : 'warn', title: 'Przeciążenie GPU / enkodera', text: `${epsGpu.length} epizod(ów), łącznie ~${Math.round(gpuSec)} s. FPS spada o ponad 40% przy GPU ≥88% albo opóźnieniu enkodowania ≥20 ms. Pomaga niższa rozdzielczość lub bitrate.` });
-    if (epsBusy.length) findings.push({ sev: 'info', title: 'Spadki FPS przy obciążonym GPU', text: `${epsBusy.length} epizod(ów), łącznie ~${Math.round(busySec)} s. Najczęściej ekran ładowania albo przycięcie samej gry, nie streamu. Sprawdź, co działo się wtedy w grze.` });
-    if (irregular.length) findings.push({ sev: 'warn', title: 'Nieregularne przerwy w połączeniu', text: `${irregular.map(g => `${fmtT(g.at)} (${g.gap.toFixed(1)} s)`).join(', ')}. Zmiana ustawień daje równe przerwy ok. 2–2,5 s; dłuższe lub nierówne sugerują zerwanie albo zawieszenie.` });
+    if (epsGpu.length) findings.push({ sev: gpuSec >= 6 ? 'crit' : 'warn', title: 'Przeciążenie GPU / enkodera', text: `${eps(epsGpu.length)}, łącznie ~${Math.round(gpuSec)} s. FPS spada o ponad 40% przy GPU ≥88% albo opóźnieniu enkodowania ≥20 ms. Pomaga niższa rozdzielczość lub bitrate.` });
+    if (epsBusy.length) findings.push({ sev: 'info', title: 'Spadki FPS przy obciążonym GPU', text: `${eps(epsBusy.length)}, łącznie ~${Math.round(busySec)} s. Najczęściej ekran ładowania albo przycięcie samej gry, nie streamu. Sprawdź, co działo się wtedy w grze.` });
+    if (irregular.length) findings.push({ sev: 'warn', title: 'Nieregularne przerwy w połączeniu', text: `${irregular.map(g => `${fmtT(g.at)} (${g.gap.toFixed(1).replace('.', ',')} s)`).join(', ')}. Zmiana ustawień daje równe przerwy ok. 2–2,5 s; dłuższe lub nierówne sugerują zerwanie albo zawieszenie.` });
     const settingsGaps = gaps.filter(g => g.kind === 'settings');
     if (settingsGaps.length) findings.push({ sev: 'info', title: 'Zmiany ustawień w trakcie', text: `${settingsGaps.length} krótki(ch) reconnect(ów) ~2 s — typowy ślad zmiany ustawień w kliencie, nie awarii.` });
-    if (cpuHot > 0.05) findings.push({ sev: 'warn', title: 'CPU hosta na granicy', text: `CPU ≥95% w ${(cpuHot * 100).toFixed(1)}% próbek okna analizy.` });
+    if (cpuHot > 0.05) findings.push({ sev: 'warn', title: 'CPU hosta na granicy', text: `CPU ≥95% w ${(cpuHot * 100).toFixed(1).replace('.', ',')}% próbek okna analizy.` });
     const encP99 = pct(encLat, 0.99);
-    if (encP99 != null && encP99 > 20) findings.push({ sev: 'warn', title: 'Skoki opóźnienia enkodowania', text: `p99 = ${encP99.toFixed(1)} ms (zdrowe sesje: kilka ms, max ok. 10–15 ms).` });
+    if (encP99 != null && encP99 > 20) findings.push({ sev: 'warn', title: 'Skoki opóźnienia enkodowania', text: `p99 = ${encP99.toFixed(1).replace('.', ',')} ms (zdrowe sesje: kilka ms, max ok. 10–15 ms).` });
 
     let status = 'ok';
     if (findings.some(x => x.sev === 'crit')) status = 'crit'; else if (findings.some(x => x.sev === 'warn')) status = 'warn';
     const verdictNote = (d.verdict === 'degraded' && status === 'ok') ? 'Vibepollo oznaczył sesję jako degraded, ale próbki tego nie potwierdzają.' :
-      (d.verdict === 'healthy' && status !== 'ok') ? 'Vibepollo oznaczył sesję jako healthy, mimo to próbki pokazują problemy.' : null;
+      (d.verdict === 'healthy' && status !== 'ok') ? 'Vibepollo oznaczył sesję jako zdrową („healthy”), mimo to próbki pokazują problemy.' : null;
 
     return {
       file: f, name: f.name, app: d.app_name || '?', client: d.client_name || d.device_name || '?', server: (d.server_version || '').split(' ')[0],

@@ -24,7 +24,7 @@ CapFrameX i PresentMon są rozpoznawane, ale jeszcze nieobsługiwane.
 1. Otwórz stronę i przeciągnij pliki (można wiele naraz).
 2. Wybierz sesję z listy.
 3. Ustaw zakres rozgrywki: przyciskami przy markerach pada, wpisując czas (np. `28:17`–`1:00:04`, przycięcie końca o N minut) albo przeciągając po wykresie.
-4. **Zapisz do historii**, **Kopiuj raport dla AI** albo porównaj zapisane sesje w zakładce *Historia i porównanie*.
+4. **Kopiuj raport dla AI** albo porównaj dwie sesje: zaznacz je w tabeli sesji albo kliknij „Porównaj z poprzednią” w nagłówku sesji.
 
 Markery: wyłącz i włącz pad podłączony do klienta na początku i na końcu fragmentu, który chcesz zmierzyć. W logu pojawi się `Gamepad N is gone` i ponowne wykrycie pada. Parser nie zależy od modelu pada. Obsługuje też przyszłe wpisy `USER_MARKER: <nazwa>`.
 
@@ -38,7 +38,7 @@ Markery: wyłącz i włącz pad podłączony do klienta na początku i na końcu
   - logi `StreamLight-*.log` / `Moonlight-*.log` z udostępnionego folderu klienta (np. `\\K12\StreamLightLogs`);
   - historię StreamTweak (`%LOCALAPPDATA%\StreamTweak\sessions.json`): telemetria StreamLight (RTT, jitter, dropy, opóźnienie hosta mierzone przez klienta) i obciążenie hosta w czasie; sesje bez pliku Vibepollo też się pojawiają;
   - sesje diagnostyczne VRR z Moonlighta (`client_logs.vrr_dirs`, udostępniony folder `vrr-diagnostics` klienta): `Moonlight.log` oraz podsumowanie sekundowe z `.vrrtrace` (wyświetlane FPS, opóźnienie odbiór→ekran, odrzucone klatki), dzięki czemu statystyki klienta są dostępne dla wybranego zakresu;
-- udostępnia StreamScope w sieci domowej pod `http://<IP-PC>:8765/`. Każde urządzenie widzi te same sesje, zakresy i historię. Pliki wrzucone ręcznie też trafiają do archiwum.
+- udostępnia StreamScope w sieci domowej pod `http://<IP-PC>:8765/`. Każde urządzenie widzi te same sesje i zakresy. Pliki wrzucone ręcznie też trafiają do archiwum.
 
 Konfiguracja: zakładka **Ustawienia** w StreamScope (tylko na komputerze z agentem): login i hasło do Vibepollo (hasło nigdy nie wraca do przeglądarki), foldery klienta i diagnostyki VRR, Steam, StreamTweak; przyciski „Testuj połączenie”, „Sprawdź foldery”, „Zapisz i zrestartuj agenta”, „Utwórz skrót na pulpicie”. Ustawienia trafiają do `agent/config.json` (w `.gitignore`; wzór: `agent/config.example.json`).
 
@@ -74,7 +74,7 @@ js/parsers/steamlog.js  parser streaming_log.txt Steama (Remote Play / PyroWave)
 js/store.js             pamięć wczytanych plików i zakresów (IndexedDB)
 js/engine/session.js    parowanie host ↔ klient, synchronizacja zegarów, benchmark zakresu
 js/engine/diagnostics.js silnik diagnostyczny (reguły z analizatora sesji)
-js/storage.js           historia (localStorage), eksport/import, raport dla AI
+js/storage.js           raport dla AI i podsumowanie JSON
 js/chart.js             wykresy SVG na wspólnej osi czasu
 js/app.js               interfejs
 ```
@@ -83,7 +83,7 @@ js/app.js               interfejs
 
 Łączy podejście StreamScope i StreamTweak. Testy: straty klatek, sieć (RTT), opóźnienie hosta (w okresach klatki), spóźnione klatki (>2 okresy), płynność u klienta, opóźnienie całkowite. Każdy test korzysta z najlepszego dostępnego źródła i je podaje. Ocena = średnia testów, ale najwyżej 1,5 pkt powyżej najsłabszego; werdykt mówi, co ogranicza. FPS, obraz i zapas hosta są tylko informacyjne (jak w StreamTweak: limit gry i ekrany ładowania fałszują FPS).
 
-Porównanie dwóch sesji: „Porównaj z…” w nagłówku sesji — werdykty, testy i pomiary obok siebie oraz nałożone wykresy od początku zakresu; testy liczone z różnych źródeł są oznaczone.
+Porównanie dwóch sesji: dwa zaznaczenia w tabeli sesji albo „Porównaj z poprzednią” (poprzednia sesja tej samej gry) — najpierw różnice w ustawieniach, potem werdykty, testy i pomiary obok siebie oraz nałożone wykresy od początku zakresu; testy liczone z różnych źródeł są oznaczone.
 
 ## Zasady obliczeń
 

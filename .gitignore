@@ -9,3 +9,4 @@ PresentMon-*.csv
 agent/config.json
 agent/agent.log
 agent/__pycache__/
+.impeccable/

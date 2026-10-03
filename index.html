@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="css/app.css?v=202610031919">
+<link rel="stylesheet" href="css/app.css?v=202610031948">
 </head>
 <body>
 <div class="wrap">
@@ -25,7 +25,6 @@
 
   <nav class="tabs" role="tablist">
     <button role="tab" id="tabAnalyze" aria-selected="true" aria-controls="viewAnalyze">Analiza</button>
-    <button role="tab" id="tabHistory" aria-selected="false" aria-controls="viewHistory" tabindex="-1">Historia i porównanie <span id="histCount" class="muted"></span></button>
     <button role="tab" id="tabSettings" aria-selected="false" aria-controls="viewSettings" tabindex="-1" hidden>Ustawienia</button>
   </nav>
 
@@ -57,7 +56,7 @@
       <span class="muted small" id="sessCount"></span>
       <span class="muted small" id="hiddenInfo" hidden></span>
       <div class="sess-scroll"><table class="sessions">
-        <thead><tr><th>Diagnostyka</th><th class="num" title="Ocena ogólna 1–10 dla wybranego zakresu">Wynik</th><th>Aplikacja · tryb</th><th>Start · czas</th><th>Klient</th><th class="num">FPS typowe</th><th>Znaleziska</th></tr></thead>
+        <thead><tr><th><span class="sr-only">Porównaj</span></th><th class="num">Wynik <span class="sub">zakres</span></th><th>Aplikacja · tryb</th><th>Start · czas</th><th>Klient</th><th class="num">FPS typowe</th><th>Diagnoza <span class="sub">cały plik</span></th></tr></thead>
         <tbody id="sessBody"></tbody>
       </table></div>
     </section>
@@ -78,7 +77,7 @@
           <li><b>Statystyki klienta</b> pochodzą z bloku „Global video stats” na końcu streamu, więc dotyczą całego streamu, nie wybranego zakresu. Końcowy <i>Bitrate / Peak (10s)</i> to stan z ostatnich sekund, nie średnia. <i>Smoothness (2m)</i> to miara równości klatek przy VRR, nie liczba FPS.</li>
           <li><b>Diagnostyka</b> ocenia cały plik hosta (reguły silnika z analizatora sesji): brak klatek do wysłania, przeciążenie GPU/enkodera, utrata pakietów, nieregularne przerwy. Pole <span class="mono">verdict</span> z Vibepollo jest tylko informacyjne.</li>
           <li><b>Steam Remote Play / PyroWave:</b> wrzuć <span class="mono">streaming_log.txt</span> (i <span class="mono">streaming_log.previous.txt</span>) z folderu <span class="mono">C:\Program Files (x86)\Steam\logs</span> na <b>hoście</b>. Log z klienta nie ma statystyk. Steam zapisuje podsumowanie przy każdej zmianie przechwytywania (pulpit ↔ gra), więc sesja składa się z odcinków; benchmark to średnia ważona długością zaznaczonych odcinków. AvgFPS Steama to kadencja streamu, nie FPS gry.</li>
-          <li><b>Pamięć:</b> wczytane pliki i ustawione zakresy są zapisywane w tej przeglądarce (IndexedDB) i wracają same po ponownym otwarciu strony. Są tylko na tym urządzeniu i w tej przeglądarce; nic nie trafia na serwer. „Wyczyść wszystko” albo „Usuń sesję z pamięci” je kasuje.</li>
+          <li><b>Pamięć:</b> wczytane pliki i ustawione zakresy są zapisywane w tej przeglądarce (IndexedDB) i wracają same po ponownym otwarciu strony. Są tylko na tym urządzeniu i w tej przeglądarce; nic nie trafia na serwer. „Wyczyść wszystko” je kasuje, a „Usuń z listy” ukrywa jedną sesję.</li>
           <li>Przy statycznym obrazie Vibepollo schodzi do ok. 16 FPS (keepalive), to nie awaria.</li>
         </ul>
       </details>
@@ -87,43 +86,23 @@
 
   <section id="viewSettings" role="tabpanel" aria-labelledby="tabSettings" hidden class="stack-lg"></section>
 
-  <section id="viewHistory" role="tabpanel" aria-labelledby="tabHistory" hidden class="stack-lg">
-    <section class="panel">
-      <div class="panel-head">
-        <h2>Zapisane sesje</h2>
-        <div class="actions">
-          <button id="compareBtn" class="primary" type="button" disabled>Porównaj zaznaczone</button>
-          <button id="exportBtn" type="button">Eksportuj kopię</button>
-          <label class="btn" for="importFile" tabindex="0" id="importBtn">Importuj kopię</label>
-          <input id="importFile" type="file" accept=".json,application/json">
-        </div>
-      </div>
-      <p class="caveat">Historia jest zapisana tylko w tej przeglądarce na tym urządzeniu. Żeby przenieść ją do innej przeglądarki albo na inny komputer, wyeksportuj kopię i zaimportuj ją tam.</p>
-      <div id="histNotice" class="notice" hidden></div>
-      <div class="tablewrap"><table>
-        <thead><tr><th></th><th>Data</th><th>Aplikacja</th><th>Klient</th><th>Tryb</th><th>Zakres</th><th class="num">Wynik</th><th class="num">Śr. FPS</th><th class="num">P5</th><th class="num">Enc. P95</th><th class="num">Bitrate</th><th></th></tr></thead>
-        <tbody id="histBody"></tbody>
-      </table></div>
-    </section>
-    <section class="panel" id="comparePanel" hidden></section>
-  </section>
   </main>
   <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
 </div>
 
-<script src="js/core.js?v=202610031919"></script>
-<script src="js/parsers/vibepollo.js?v=202610031919"></script>
-<script src="js/parsers/clientlog.js?v=202610031919"></script>
-<script src="js/parsers/streamtweak.js?v=202610031919"></script>
-<script src="js/parsers/steamlog.js?v=202610031919"></script>
-<script src="js/engine/diagnostics.js?v=202610031919"></script>
-<script src="js/engine/gameplay.js?v=202610031919"></script>
-<script src="js/engine/score.js?v=202610031919"></script>
-<script src="js/engine/session.js?v=202610031919"></script>
-<script src="js/storage.js?v=202610031919"></script>
-<script src="js/store.js?v=202610031919"></script>
-<script src="js/chart.js?v=202610031919"></script>
-<script src="js/settings.js?v=202610031919"></script>
-<script src="js/app.js?v=202610031919"></script>
+<script src="js/core.js?v=202610031948"></script>
+<script src="js/parsers/vibepollo.js?v=202610031948"></script>
+<script src="js/parsers/clientlog.js?v=202610031948"></script>
+<script src="js/parsers/streamtweak.js?v=202610031948"></script>
+<script src="js/parsers/steamlog.js?v=202610031948"></script>
+<script src="js/engine/diagnostics.js?v=202610031948"></script>
+<script src="js/engine/gameplay.js?v=202610031948"></script>
+<script src="js/engine/score.js?v=202610031948"></script>
+<script src="js/engine/session.js?v=202610031948"></script>
+<script src="js/storage.js?v=202610031948"></script>
+<script src="js/store.js?v=202610031948"></script>
+<script src="js/chart.js?v=202610031948"></script>
+<script src="js/settings.js?v=202610031948"></script>
+<script src="js/app.js?v=202610031948"></script>
 </body>
 </html>

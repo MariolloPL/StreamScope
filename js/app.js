@@ -1,5 +1,5 @@
 // StreamScope UI: file intake → sessions table → session detail (range, markers, charts, benchmark,
-// client stats, diagnostics) → history & compare.
+// client stats, diagnostics) → side-by-side compare.
 (() => {
   // Version = the ?v= stamp on this script tag (bumped on every release), shown so stale caches are easy to spot.
   {
@@ -17,7 +17,7 @@
   const state = {
     hosts: new Map(), logs: new Map(), diag: new Map(), steam: new Map(), steamSel: new Map(), hidden: new Set(),
     agent: null, fileIndex: new Map(), traces: new Map(), streamtweak: null, compareWith: null,
-    sessions: [], selected: null, ranges: new Map(), timeBase: 'client', compare: new Set(),
+    sessions: [], selected: null, ranges: new Map(), timeBase: 'client', cmpSel: new Set(),
     filter: (() => { try { return localStorage.getItem('streamscope.filter') || 'all'; } catch (e) { return 'all'; } })()
   };
 
@@ -96,8 +96,6 @@
       state.agent = agent;
       $('#clearBtn').hidden = true;   // the archive belongs to the agent; single sessions can still be hidden
       $('#tabSettings').hidden = false;
-      await SS.History.useAgent().catch(() => {});
-      renderHistory();
     }
     let files = [], ranges = [];
     try { [files, ranges] = await Promise.all([SS.Store.allFiles(), SS.Store.allRanges()]); }
@@ -146,7 +144,7 @@
         changed++;
       }
       state.agent = await SS.Store.info();
-      if (changed) { rebuild(); if (!$('#viewHistory').hidden) renderHistory(); }
+      if (changed) rebuild();
       storageInfo();
     } catch (e) { /* agent briefly unreachable (PC asleep): try again next minute */ }
     polling = false;
@@ -257,42 +255,46 @@
       $('#unhideBtn').onclick = restoreHidden;
     }
     if (!S.length) { body.innerHTML = `<tr><td colspan="7" class="empty">Brak plików. Przeciągnij pliki powyżej.</td></tr>`; return; }
-    const row = (s, pill, fps, tags) => `<tr class="pick${s.id === state.selected ? ' sel' : ''}" data-id="${esc(s.id)}" tabindex="0"${s.id === state.selected ? ' aria-current="true"' : ''}>
-        <td>${pill}</td>
+    // Score (chosen range) leads; the whole-file diagnosis is a quiet tag at the end so the two never compete.
+    const diagTag = (status, label) => `<span class="diag ${status}">${label}</span>`;
+    const row = (s, diag, fps, tags) => `<tr class="pick${s.id === state.selected ? ' sel' : ''}" data-id="${esc(s.id)}" tabindex="0"${s.id === state.selected ? ' aria-current="true"' : ''}>
+        <td><input type="checkbox" data-cmp="${esc(s.id)}" ${state.cmpSel.has(s.id) ? 'checked' : ''} aria-label="Porównaj: ${esc(s.app)}, ${shortDate(s.t0)}"></td>
         <td class="num">${scoreChip(sessionScore(s))}</td>
         <td><div class="app">${esc(s.app)}</div><div class="mono small muted">${esc(modeOf(s))}</div></td>
         <td class="mono"><div style="white-space:nowrap">${shortDate(s.t0)}</div><div class="small muted">${tfmt(s.t1 - s.t0)}</div></td>
         <td>${clientCell(s)}</td>
         <td class="num">${fps}</td>
-        <td class="small tags">${esc(tags)}</td></tr>`;
+        <td class="small tags">${diag}${tags ? ` · ${esc(tags)}` : ''}</td></tr>`;
     body.innerHTML = S.map(s => {
       if (s.steam) {
         const sum = SS.steamSummary(steamSegs(s));
         const sd = s.sdiag;
-        const tags = sd.findings.filter(x => x.sev !== 'info').map(x => x.title).join(' · ') || 'brak';
-        return row(s, `<span class="pill ${sd.status}">Steam · ${statusLabel[sd.status]}</span>`, `${num(sum.fps, 0)}`, tags);
+        const tags = sd.findings.filter(x => x.sev !== 'info').map(x => x.title).join(' · ');
+        return row(s, diagTag(sd.status, statusLabel[sd.status]), `${num(sum.fps, 0)}`, tags);
       }
       if (!s.host && !s.clients.length && s.st) {
         const sc = sessionScore(s);
-        return row(s, '<span class="pill raw">StreamTweak</span>', `${num(s.st.stats.FpsAvg, 0)} <span class="muted small">klient</span>`, sc ? sc.reason : '');
+        return row(s, diagTag('raw', 'tylko StreamTweak'), `${num(s.st.stats.FpsAvg, 0)} <span class="muted small">klient</span>`, sc ? sc.reason : '');
       }
       const d = diagOf(s);
-      const tags = d ? d.findings.filter(f => f.sev !== 'info').map(f => f.title).join(' · ') || 'brak' : '';
+      const tags = d ? d.findings.filter(f => f.sev !== 'info').map(f => f.title).join(' · ') : '';
       const fps = d ? `${num(d.stats.baseline, 0)} <span class="muted small">/ ${s.host.target}</span>` : (s.clients[0].stream.stats ? `${num(s.clients[0].stream.stats.incoming, 0)} <span class="muted small">klient</span>` : '—');
-      return row(s, d ? `<span class="pill ${d.status}">${statusLabel[d.status]}</span>` : '<span class="pill raw">bez hosta</span>', fps, tags);
+      return row(s, d ? diagTag(d.status, statusLabel[d.status]) : diagTag('raw', 'bez pliku hosta'), fps, tags);
     }).join('');
     body.querySelectorAll('tr.pick').forEach(tr => {
       const pick = () => {
         const id = tr.dataset.id;
+        if (state.compareWith) { state.cmpSel.clear(); state.compareWith = null; renderSideBySide(); }
         state.selected = id; renderSessions(); renderDetail();
         const again = body.querySelector(`tr[data-id="${CSS.escape(id)}"]`); if (again) again.focus({ preventScroll: true });
         $('#detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
         const cur = current(), sc = cur && sessionScore(cur);
         if (cur) announce(`Wybrano ${cur.app}, ${shortDate(cur.t0)}` + (sc && sc.overall != null ? `, wynik ${num(sc.overall, 1)}` : ''));
       };
-      tr.addEventListener('click', pick);
-      tr.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+      tr.addEventListener('click', e => { if (!e.target.closest('input')) pick(); });
+      tr.addEventListener('keydown', e => { if (e.target === tr && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); pick(); } });
     });
+    body.querySelectorAll('[data-cmp]').forEach(cb => cb.addEventListener('change', () => toggleCompare(cb.dataset.cmp, cb.checked)));
   }
 
   // ---------- time base & range ----------
@@ -323,7 +325,7 @@
     announce(`Zakres ${fmtU(s, e.a)} – ${fmtU(s, e.b)}` + (sc && sc.overall != null ? `, wynik ${num(sc.overall, 1)}` : ''));
   }
 
-  // Bring back sessions hidden with "Usuń sesję z pamięci" (agent mode / Steam keep files and only hide).
+  // Bring back sessions hidden with "Usuń z listy" (agent mode / Steam keep files and only hide).
   async function restoreHidden() {
     const ids = [...state.hidden];
     state.hidden.clear();
@@ -333,7 +335,7 @@
 
   // Forget one session: its host file plus client logs that pair with nothing else.
   async function removeSession(s) {
-    if (!confirm(`Usunąć sesję „${s.app}” z ${date(s.t0)} z pamięci przeglądarki? Zapisane podsumowania w Historii zostaną.`)) return;
+    if (!confirm(`Usunąć sesję „${s.app}” z ${date(s.t0)} z listy?${s.steam || state.agent ? ' Pliki zostają w archiwum; przywrócisz ją przyciskiem „Przywróć wszystkie”.' : ''}`)) return;
     if (s.steam || state.agent) {
       // One Steam log holds many connections, and the agent would re-collect deleted files from their
       // sources, so the session is hidden (remembered) rather than deleting any file.
@@ -390,8 +392,10 @@
             <div class="chips">${chips.map(x => `<span class="chip">${esc(x)}</span>`).join('')}${last.pyrowave ? '<span class="chip good">PyroWave</span>' : ''}</div>
             ${bitrates ? `<div class="muted small">Docelowy bitrate ustawiany przez Steam: ${esc(bitrates)}</div>` : ''}
           </div>
-          <div class="actions"><button class="small" type="button" data-compare>Porównaj z…</button><button class="small" type="button" id="removeBtn">Usuń sesję z pamięci</button></div>
+          ${actionsHtml(s, sum.n > 0)}
         </div>
+        ${verdictHtml(sum.n ? SS.Score.steam(steamSegs(s), sum) : null, `${sum.n} odc. Steama, łącznie ${tfmt(sum.dur)}`)}
+        <textarea class="fallback" id="copyFallback" readonly hidden></textarea>
         <p class="caveat">Steam zapisuje tylko podsumowania odcinków (nowy odcinek przy każdej zmianie przechwytywania, np. pulpit ↔ gra), bez próbek co kilka sekund. Dlatego zamiast wykresu i zakresu czasu wybierasz odcinki, a średnie są ważone ich długością.</p>
       </section>
       <section class="panel" aria-labelledby="sgTitle">
@@ -412,25 +416,24 @@
       <section class="panel" aria-labelledby="bTitle">
         <div class="panel-head"><h2 id="bTitle">Benchmark odcinków</h2><span class="muted small">${sum.n} odc., łącznie ${tfmt(sum.dur)}</span></div>
         ${sum.n ? scoreHtml(SS.Score.steam(steamSegs(s), sum)) : ''}
-        ${sum.n ? `<div class="stats">
+        ${sum.n ? group('FPS i sieć', `
           ${stat('Śr. FPS (Steam)', num(sum.fps, 1), last.fpsLimit ? '/ ' + last.fpsLimit : '', true)}
-          ${stat('Czas klatki śr.', num(sum.frameMs, 2), 'ms', true)}
-          ${stat('Bitrate serwera śr.', num(sum.serverMbps, 1), 'Mb/s', true)}
+          ${stat('Czas klatki śr.', num(sum.frameMs, 2), 'ms')}
+          ${stat('Bitrate serwera śr.', num(sum.serverMbps, 1), 'Mb/s')}
           ${stat('Przepustowość łącza', num(sum.linkMbps, 0), 'Mb/s')}
-          ${stat('Ping', num(sum.pingMs, 2), 'ms', true)}
-          ${stat('Sieć (transfer klatki)', num(sum.networkMs, 2), 'ms')}
+          ${stat('Ping', num(sum.pingMs, 2), 'ms')}
+          ${stat('Sieć (transfer klatki)', num(sum.networkMs, 2), 'ms')}`) + group('Etapy klatki', `
           ${stat('Przechwytywanie', num(sum.captureMs, 2), sum.captureMs == null ? 'nie mierzone' : 'ms')}
           ${stat('Konwersja', num(sum.convertMs, 2), sum.convertMs == null ? 'nie mierzone' : 'ms')}
           ${stat('Enkodowanie', num(sum.encodeMs, 2), sum.encodeMs == null ? 'nie mierzone' : 'ms')}
           ${stat('Dekodowanie', num(sum.decodeMs, 2), 'ms')}
-          ${stat('Wyświetlanie', num(sum.displayMs, 2), 'ms')}
-          ${Object.entries(sum.slow).map(([k, v]) => stat(`Wolne: ${SLOW_LABEL[k]}`, num(v, 2), '% czasu')).join('')}
-        </div>` : '<p class="muted">Zaznacz przynajmniej jeden odcinek.</p>'}
+          ${stat('Wyświetlanie', num(sum.displayMs, 2), 'ms')}`) + group('Wolne klatki (% czasu)', Object.entries(sum.slow).map(([k, v]) => stat(SLOW_LABEL[k], num(v, 2), '%')).join(''))
+        : '<p class="muted">Zaznacz przynajmniej jeden odcinek.</p>'}
         <p class="caveat">AvgFPS Steama to metryka streamu, nie FPS gry, a menu i ekrany ładowania go zaniżają. Przy PyroWave w przechwytywaniu gry Steam raportuje 0 ms dla przechwytywania, konwersji i enkodowania; takie zera są traktowane jako „nie mierzone”.</p>
       </section>
       <section class="panel" aria-labelledby="sdTitle">
         <div class="panel-head"><h2 id="sdTitle">Diagnostyka całej sesji</h2>
-          <div class="actions"><span class="muted small">Analiza:</span><span class="pill ${s.sdiag.status}">${statusLabel[s.sdiag.status]}</span></div></div>
+          <span class="diag ${s.sdiag.status}">${statusLabel[s.sdiag.status]}</span></div>
         <div class="findings">${(s.sdiag.findings.length ? s.sdiag.findings : [{ sev: 'ok', title: 'Nic nie wymaga uwagi', text: 'Brak istotnych wąskich gardeł, FPS blisko limitu, ping i bitrate w normie.' }])
           .map(x => `<div class="finding ${x.sev}"><span class="bar"></span><div><h3>${esc(x.title)}</h3><p>${esc(x.text)}</p></div></div>`).join('')}</div>
         <p class="caveat">Ocena obejmuje wszystkie odcinki połączenia (wąskie gardła, FPS i sieć liczone z odcinków gry, jeśli są), niezależnie od zaznaczenia powyżej.</p>
@@ -438,16 +441,7 @@
       ${slowTimes.length ? `<section class="panel"><details><summary>Zdarzenia „Slow framerate” (${slowTimes.length})</summary><div class="tablewrap"><table>
         <thead><tr><th class="num">Godzina</th><th>Przyczyna</th><th class="num">Gra</th><th class="num">Przechw.</th><th class="num">Konw.</th><th class="num">Enk.</th><th class="num">Sieć</th><th class="num">Dekod.</th><th class="num">Wyśw.</th></tr></thead>
         <tbody>${slowTimes.map(e => `<tr><td class="num">${clock(e.u)}</td><td>${esc(e.causes.map(k => SLOW_LABEL[k] || k).join(', ') || '—')}</td>${['game', 'capture', 'convert', 'encode', 'network', 'decode', 'display'].map(k => `<td class="num">${e[k] == null || Math.abs(e[k]) > 10000 ? '—' : num(e[k], 1)}</td>`).join('')}</tr>`).join('')}</tbody>
-      </table></div></details></section>` : ''}
-      <section class="panel">
-        <div class="actions">
-          <button class="primary" id="saveBtn" type="button" ${sum.n ? '' : 'disabled'}>Zapisz do historii</button>
-          <button id="copyBtn" type="button" ${sum.n ? '' : 'disabled'}>Kopiuj raport dla AI</button>
-          <button id="jsonBtn" type="button" ${sum.n ? '' : 'disabled'}>Pobierz podsumowanie JSON</button>
-          <span class="muted small" id="actMsg"></span>
-        </div>
-        <textarea class="fallback" id="copyFallback" readonly hidden></textarea>
-      </section>`;
+      </table></div></details></section>` : ''}`;
 
     el.querySelectorAll('[data-sg]').forEach(cb => cb.addEventListener('change', () => {
       const set = steamSelection(s);
@@ -455,38 +449,39 @@
       SS.Store.putRange({ id: s.id, segs: [...set] }).catch(() => {});
       renderSteamDetail(el, s); renderSessions();
     }));
-    $('#removeBtn').addEventListener('click', () => removeSession(s));
-    wireCompare(el, s);
-    const summary = () => {
+    wireActions(el, s, () => {
       const segs = steamSegs(s), sum = SS.steamSummary(segs);
       return { ...SS.Report.steamSummary(s, segs, sum, s.sdiag), scores: SS.Score.compact(SS.Score.steam(segs, sum)) };
-    };
-    $('#saveBtn').addEventListener('click', () => {
-      const ok = SS.History.add(summary());
-      actMsg(ok ? 'Zapisano w historii tej przeglądarki.' : 'Zapisano tylko do zamknięcia karty: przeglądarka blokuje pamięć lokalną.');
-      renderHistory();
-    });
-    $('#copyBtn').addEventListener('click', () => copyText(SS.Report.text(summary())));
-    $('#jsonBtn').addEventListener('click', () => {
-      const x = summary();
-      download(`streamscope-steam-${x.app.replace(/\W+/g, '_')}-${new Date(x.date * 1000).toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`, JSON.stringify(x, null, 2));
-    });
+    }, 'streamscope-steam');
   }
 
   // ---------- compare two sessions side by side ----------
   const sessLabel = s => `${shortDate(s.t0)} · ${s.app} · ${s.steam ? 'Steam ' + shortEnc((s.steam.segments.at(-1) || {}).encoder) : s.clients[0] ? `${s.clients[0].log.client} ${(s.host && s.host.codec) || ''}` : s.st ? 'StreamLight (StreamTweak)' : (s.host && s.host.codec) || ''}`;
 
-  function wireCompare(el, s) {
-    const b = el.querySelector('[data-compare]');
-    if (!b) return;
-    b.addEventListener('click', () => {
-      if (b.nextElementSibling && b.nextElementSibling.tagName === 'SELECT') { b.nextElementSibling.remove(); return; }
-      const sel = document.createElement('select');
-      sel.innerHTML = `<option value="">Wybierz sesję do porównania…</option>` +
-        state.sessions.filter(o => o.id !== s.id).map(o => `<option value="${esc(o.id)}">${esc(sessLabel(o))}</option>`).join('');
-      sel.addEventListener('change', () => { if (sel.value) { state.compareWith = { a: s.id, b: sel.value }; renderSideBySide(); $('#cmpView').scrollIntoView({ behavior: 'smooth', block: 'start' }); } });
-      b.after(sel); sel.focus();
-    });
+  // Compare is picked in the sessions table (two ticks) or with "Porównaj z poprzednią". A = the earlier session.
+  function setCompare(ids) {
+    state.cmpSel = new Set(ids);
+    const [a, b] = ids.map(id => state.sessions.find(x => x.id === id)).filter(Boolean).sort((x, y) => x.t0 - y.t0);
+    state.compareWith = a && b ? { a: a.id, b: b.id } : null;
+    renderSessions(); renderSideBySide();
+    if (state.compareWith) $('#cmpView').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function toggleCompare(id, on) {
+    const ids = [...state.cmpSel].filter(x => x !== id);
+    if (on) ids.push(id);
+    setCompare(ids.slice(-2));   // a third tick replaces the oldest one
+  }
+  // Settings that define a tuning experiment; shown first so the change being tested is obvious.
+  function setupOf(s) {
+    const st = s.clients[0] && s.clients[0].stream, req = s.host && s.host.reqBitrate ? s.host.reqBitrate / 1000 : st && st.bitrateKbps ? st.bitrateKbps / 1000 : s.st && s.st.stats.TargetBitrateMbps;
+    const vrr = st ? SS.Report.vrrState(st) : null;
+    return [
+      ['Tryb', modeOf(s)],
+      ['Bitrate ustawiony', req ? `${num(req, 0)} Mb/s` : null],
+      ['Klient', s.steam ? `Steam → ${s.steam.client}` : [...new Set(s.clients.map(c => c.log.client))].join(', ') || null],
+      ['VRR', vrr],
+      ['Enkoder / host', s.host ? [s.host.server && `Vibepollo ${s.host.server}`, s.host.hostGpu].filter(Boolean).join(' · ') : s.steam ? shortEnc((s.steam.segments.at(-1) || {}).encoder) : null]
+    ];
   }
 
   // Everything the comparison needs about one session, for its current range (or chosen Steam segments).
@@ -538,6 +533,7 @@
     const box = $('#cmpView');
     const cw = state.compareWith;
     const A = cw && state.sessions.find(x => x.id === cw.a), B = cw && state.sessions.find(x => x.id === cw.b);
+    $('#detail').hidden = !!(A && B);
     if (!A || !B) { box.hidden = true; box.innerHTML = ''; return; }
     const va = sessionView(A), vb = sessionView(B);
     const head = v => `<div class="stack">
@@ -547,7 +543,15 @@
       </div>`;
     const diff = (a, b, d) => a == null || b == null ? '' : `${b - a > 0 ? '+' : ''}${num(b - a, d)}`;
     const cell = (v, d) => v == null ? '—' : num(v, d);
+    const ua = setupOf(A), ub = setupOf(B);
     const rows = [
+      `<tr><td colspan="4" class="eyebrow group">Ustawienia</td></tr>`,
+      ...ua.map(([k, a], i) => {
+        const b = ub[i][1];
+        if (a == null && b == null) return '';
+        const changed = (a || '') !== (b || '');
+        return `<tr${changed ? ' class="changed"' : ''}><td>${k}</td><td class="num">${esc(a || '—')}</td><td class="num">${esc(b || '—')}</td><td class="num">${changed ? 'zmiana' : ''}</td></tr>`;
+      }),
       `<tr><td colspan="4" class="eyebrow group">Testy oceny (1–10)</td></tr>`,
       ...SS.Score.GRADED.map(k => {
         const pa = va.sc && va.sc.parts[k], pb = vb.sc && vb.sc.parts[k];
@@ -566,13 +570,13 @@
       })
     ].join('');
     box.hidden = false;
-    box.innerHTML = `<div class="panel-head"><h2>Porównanie sesji</h2><div class="actions"><button class="small" type="button" id="cmpSwap">Zamień A ↔ B</button><button class="small" type="button" id="cmpClose">Zamknij</button></div></div>
+    box.innerHTML = `<div class="panel-head"><h2>Porównanie sesji</h2><div class="actions"><button class="small" type="button" id="cmpSwap">Zamień A ↔ B</button><button class="small" type="button" id="cmpClose">← Wróć do sesji</button></div></div>
       <div class="two">${head(va)}${head(vb)}</div>
-      <div class="tablewrap"><table><thead><tr><th>Metryka</th><th class="num">A</th><th class="num">B</th><th class="num">Różnica B − A</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="tablewrap"><table class="cmp"><thead><tr><th>Metryka</th><th class="num"><span class="ab">A</span></th><th class="num"><span class="ab b">B</span></th><th class="num">Różnica B − A</th></tr></thead><tbody>${rows}</tbody></table></div>
       <div class="legend"><span><i style="background:var(--s-fps)"></i>A: ${esc(va.s.app)} ${shortDate(va.s.t0)}</span><span><i style="background:repeating-linear-gradient(90deg,var(--s-enc) 0 5px,transparent 5px 8px)"></i>B (przerywana): ${esc(vb.s.app)} ${shortDate(vb.s.t0)}</span><span class="muted">oś czasu: od początku zakresu każdej sesji</span></div>
       <div class="chart" id="cmpChart"></div>
       <p class="caveat">Obie sesje liczone w swoich aktualnych zakresach (domyślnie wykryta rozgrywka). Różnica to tylko liczby; StreamScope nie wskazuje zwycięzcy. Porównuj podobne fragmenty gry (ta sama mapa, podobna długość).</p>`;
-    $('#cmpClose').onclick = () => { state.compareWith = null; renderSideBySide(); };
+    $('#cmpClose').onclick = () => { setCompare([]); $('#detail').scrollIntoView({ block: 'start' }); };
     $('#cmpSwap').onclick = () => { state.compareWith = { a: cw.b, b: cw.a }; renderSideBySide(); };
     const panel = (label, key, h, extra = {}) => {
       const sa = va.series[key], sb = vb.series[key];
@@ -616,44 +620,32 @@
             <h2 id="dTitle">${esc(s.app)}${h ? ` <span class="muted sub">· ${esc(h.client)}</span>` : ''}</h2>
             <div class="chips">${chips.map(c => `<span class="chip">${esc(c)}</span>`).join('')}${syncChip}</div>
           </div>
-          <div class="actions"><button class="small" type="button" data-compare>Porównaj z…</button><button class="small" type="button" id="removeBtn">Usuń sesję z pamięci</button></div>
+          ${actionsHtml(s, true)}
         </div>
-        ${h && h.segs.length > 1 ? segTable(s) : ''}
+        <div id="dVerdict"></div>
+        <textarea class="fallback" id="copyFallback" readonly hidden></textarea>
       </section>
-      <section class="panel" aria-labelledby="rTitle">
-        <div class="panel-head"><h2 id="rTitle">Zakres rozgrywki</h2>
+      <section class="panel" aria-labelledby="cTitle">
+        <div class="panel-head"><h2 id="cTitle">Przebieg i zakres</h2>
           <div class="seg" role="group" aria-label="Oś czasu">
             <button type="button" data-base="client" aria-pressed="${useClientBase(s)}" ${s.clientBase == null ? 'disabled' : ''}>Czas ${s.log ? esc(s.log.client) : 'klienta'}</button>
             <button type="button" data-base="host" aria-pressed="${!useClientBase(s)}">Od startu hosta</button>
           </div>
         </div>
         <div id="dRange"></div>
-        ${gameplayList(s)}
-        ${markerTable(s)}
-      </section>
-      <section class="panel" aria-labelledby="cTitle">
-        <div class="panel-head"><h2 id="cTitle">Przebieg</h2><span class="muted small">Przeciągnij po wykresie, żeby wybrać zakres.</span></div>
+        ${rangeSources(s)}
         ${h || s.st ? `<div class="legend">
           <span><i style="background:var(--s-fps)"></i>FPS (actual_fps)</span><span><i style="background:var(--s-br)"></i>Bitrate</span><span><i style="background:var(--s-enc)"></i>Enkodowanie / enkoder GPU</span><span><i style="background:var(--s-cpu)"></i>CPU hosta</span><span><i style="background:var(--s-gpu)"></i>GPU hosta</span>
           <span><i style="background:var(--mk-off)"></i>pad OFF</span><span><i style="background:var(--mk-on)"></i>pad ON</span><span><i style="background:var(--warn)"></i>RFI (klient)</span><span><i style="background:var(--crit)"></i>IDR / przepełnienie</span>
           <span><i class="box" style="background:var(--shade-crit)"></i>brak klatek</span><span><i class="box" style="background:var(--shade-warn)"></i>przeciążenie GPU</span><span><i class="box" style="background:var(--dim)"></i>poza zakresem</span><span><i style="background:var(--ok);height:5px"></i>wykryta rozgrywka</span>
-        </div><div class="chart" id="dChart"></div>` : `<p class="muted">Wykresy wymagają pliku sesji Vibepollo z tego samego czasu.</p>`}
+        </div><div class="chart" id="dChart"></div><p class="caveat">Przeciągnij po wykresie, żeby wybrać zakres.</p>` : `<p class="muted">Wykresy wymagają pliku sesji Vibepollo z tego samego czasu.</p>`}
       </section>
       <section class="panel" aria-labelledby="bTitle">
         <div class="panel-head"><h2 id="bTitle">Benchmark zakresu</h2><span class="muted small" id="bScope"></span></div>
         <div id="dBench"></div>
       </section>
       <section class="panel" aria-labelledby="klTitle"><h2 id="klTitle">Klient</h2><div id="dClient"></div></section>
-      ${h ? `<section class="panel" aria-labelledby="dgTitle">${diagHtml(s)}</section>` : ''}
-      <section class="panel">
-        <div class="actions">
-          <button class="primary" id="saveBtn" type="button">Zapisz do historii</button>
-          <button id="copyBtn" type="button">Kopiuj raport dla AI</button>
-          <button id="jsonBtn" type="button">Pobierz podsumowanie JSON</button>
-          <span class="muted small" id="actMsg"></span>
-        </div>
-        <textarea class="fallback" id="copyFallback" readonly hidden></textarea>
-      </section>`;
+      ${h ? `<section class="panel" aria-labelledby="dgTitle">${diagHtml(s)}</section>` : ''}`;
 
     el.querySelectorAll('[data-base]').forEach(b => b.addEventListener('click', () => { state.timeBase = b.dataset.base; renderDetail(); }));
     el.querySelectorAll('[data-seg]').forEach(b => b.addEventListener('click', () => {
@@ -666,28 +658,68 @@
       const m = s.markers[+b.dataset.mk];
       setRange(s, b.dataset.as === 'start' ? { a: m.u } : { b: m.u, trimMin: 0 });
     }));
-    $('#removeBtn').addEventListener('click', () => removeSession(s));
-    wireCompare(el, s);
-    $('#saveBtn').addEventListener('click', () => {
-      const ok = SS.History.add(buildSummary(s));
-      actMsg(ok ? 'Zapisano w historii tej przeglądarki.' : 'Zapisano tylko do zamknięcia karty: przeglądarka blokuje pamięć lokalną.');
-      renderHistory();
-    });
-    $('#copyBtn').addEventListener('click', () => copyText(SS.Report.text(buildSummary(s))));
-    $('#jsonBtn').addEventListener('click', () => {
-      const sum = buildSummary(s);
-      download(`streamscope-${sum.app.replace(/\W+/g, '_')}-${new Date(sum.date * 1000).toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`, JSON.stringify(sum, null, 2));
-    });
+    wireActions(el, s, () => buildSummary(s), 'streamscope');
     updateRangeViews();
   }
 
   function segTable(s) {
     const segs = s.host.segs;
-    return `<details><summary>Połączenia w pliku hosta (${segs.length})</summary><div class="tablewrap"><table>
+    return `<div class="stack"><h3>Połączenia w pliku hosta</h3><div class="tablewrap"><table class="fit">
       <thead><tr><th>#</th><th class="num">Start</th><th class="num">Koniec</th><th class="num">Długość</th><th class="num">Przerwa przed</th><th></th></tr></thead>
       <tbody>${segs.map((g, i) => `<tr><td>${i + 1}</td><td class="num">${fmtU(s, g.t0)} <span class="muted small">${clock(g.t0)}</span></td><td class="num">${fmtU(s, g.t1)}</td>
         <td class="num">${tfmt(g.t1 - g.t0)}</td><td class="num">${i ? num(g.t0 - segs[i - 1].t1, 1) + ' s' : ''}</td>
-        <td><button class="small" type="button" data-seg="${i}">Ustaw jako zakres</button></td></tr>`).join('')}</tbody></table></div></details>`;
+        <td><button class="small" type="button" data-seg="${i}">Ustaw jako zakres</button></td></tr>`).join('')}</tbody></table></div></div>`;
+  }
+
+  // Answer first: score, what limits it, the weakest checks and the range it was computed for.
+  function verdictHtml(sc, rangeText) {
+    if (!sc || sc.overall == null) return `<p class="muted">Brak oceny: ${esc(sc ? sc.reason : 'za mało danych w zakresie')}</p>`;
+    const weak = SS.Score.GRADED.filter(k => sc.parts[k] && sc.parts[k].score != null).sort((a, b) => sc.parts[a].score - sc.parts[b].score).slice(0, 3);
+    return `<div class="verdict">
+      <div class="score-big"><span class="n s-${SS.Score.cls(sc.overall)}">${num(sc.overall, 1)}</span><span class="d">${esc(sc.label)}</span></div>
+      <div class="stack-8">
+        <b class="v-reason">${esc(sc.reason)}</b>
+        <div class="weak">${weak.map(k => { const p = sc.parts[k], c = SS.Score.cls(p.score); return `<span class="w"><span>${SS.Score.LABELS[k]}</span><span class="meter"><i class="m-${c}" style="width:${p.score * 10}%"></i></span><b class="s-${c}">${num(p.score, 1)}</b></span>`; }).join('')}</div>
+        <span class="small muted">Liczone dla: ${esc(rangeText)} · <button type="button" class="link" data-edit-range>zmień</button></span>
+      </div>
+    </div>`;
+  }
+  // Previous session of the same game and kind: the usual baseline after changing one setting.
+  const prevSimilar = s => state.sessions.find(o => o.t0 < s.t0 && o.app === s.app && kindOf(o) === kindOf(s));
+  function actionsHtml(s, ready) {
+    const prev = prevSimilar(s);
+    return `<div class="actions">
+      <button class="small" type="button" data-prev ${prev ? `title="${esc(sessLabel(prev))}"` : 'disabled title="Brak wcześniejszej sesji tej gry"'}>Porównaj z poprzednią</button>
+      <button class="small" type="button" id="copyBtn" ${ready ? '' : 'disabled'}>Kopiuj raport dla AI</button>
+      <button class="small" type="button" id="jsonBtn" ${ready ? '' : 'disabled'}>Pobierz JSON</button>
+      <button class="small" type="button" id="removeBtn">Usuń z listy</button>
+      <span class="muted small" id="actMsg" role="status"></span>
+    </div>`;
+  }
+  function wireActions(el, s, summary, prefix) {
+    $('#removeBtn').addEventListener('click', () => removeSession(s));
+    const prev = el.querySelector('[data-prev]');
+    prev.addEventListener('click', () => { const p = prevSimilar(s); if (p) setCompare([p.id, s.id]); });
+    $('#copyBtn').addEventListener('click', () => copyText(SS.Report.text(summary())));
+    $('#jsonBtn').addEventListener('click', () => {
+      const x = summary();
+      download(`${prefix}-${x.app.replace(/\W+/g, '_')}-${new Date(x.date * 1000).toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`, JSON.stringify(x, null, 2));
+    });
+    el.addEventListener('click', e => {
+      if (!e.target.closest('[data-edit-range]')) return;
+      const t = $('#rStart') || $('#sgTitle'); if (!t) return;
+      t.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (t.focus) t.focus({ preventScroll: true });
+    });
+  }
+
+  // Ways to set the range besides typing it: detected gameplay, pad markers, host connections.
+  function rangeSources(s) {
+    if (!s.host && !s.clients.length) return '';
+    const gp = (s.host && s.host.gameplay) || [], segs = s.host ? s.host.segs : [];
+    const parts = [`wykryta rozgrywka (${gp.length})`, `markery pada (${s.markers.length})`];
+    if (segs.length > 1) parts.push(`połączenia (${segs.length})`);
+    return `<details class="sources"><summary>Skąd wziąć zakres: ${parts.join(' · ')}</summary><div class="stack-lg">
+      ${gameplayList(s)}${markerTable(s)}${segs.length > 1 ? segTable(s) : ''}</div></details>`;
   }
 
   function gameplayList(s) {
@@ -696,7 +728,7 @@
     if (!gp.length) return `<p class="muted small">Nie wykryto fragmentów rozgrywki (wysokie obciążenie CPU, stabilny FPS i bitrate przez min. 3 minuty). Ustaw zakres ręcznie albo markerami.</p>`;
     return `<div class="stack">
       <h3>Wykryta rozgrywka <span class="muted small sub">automatycznie, bez markerów</span></h3>
-      <div class="tablewrap"><table>
+      <div class="tablewrap"><table class="fit">
         <thead><tr><th class="num">Od</th><th class="num">Do</th><th class="num">Długość</th><th class="num">Godziny</th><th></th></tr></thead>
         <tbody>${gp.map((g, i) => `<tr><td class="num">${fmtU(s, g.a)}</td><td class="num">${fmtU(s, g.b)}</td><td class="num">${tfmt(g.dur)}</td>
           <td class="num muted">${clock(g.a)}–${clock(g.b)}</td>
@@ -708,16 +740,16 @@
 
   function markerTable(s) {
     if (!s.markers.length) {
-      return `<p class="muted small">Brak markerów.${s.clients.length ? ' Wyłącz i włącz pad podłączony do klienta na początku i na końcu rozgrywki, a pojawią się tutaj.' : ' Dodaj log klienta z tej sesji, żeby zobaczyć markery pada.'}</p>`;
+      return `<p class="muted small">Brak markerów pada.${s.clients.length ? ' Wyłącz i włącz pad podłączony do klienta na początku i na końcu rozgrywki, a pojawią się tutaj.' : ' Dodaj log klienta z tej sesji, żeby zobaczyć markery pada.'}</p>`;
     }
-    return `<div class="tablewrap"><table>
+    return `<div class="stack"><h3>Markery pada</h3><div class="tablewrap"><table class="fit">
       <thead><tr><th class="num">Moment</th><th class="num">Godzina</th><th>Marker</th><th>Urządzenie</th><th></th></tr></thead>
       <tbody>${s.markers.map((m, i) => `<tr>
         <td class="num">${fmtU(s, m.u)}</td><td class="num muted">${clock(m.u)}</td>
         <td><span class="pill ${m.type === 'pad-off' ? 'crit' : m.type === 'pad-on' ? 'ok' : 'raw'}">${esc(m.label)}</span></td>
         <td class="small">${esc(m.device || '')}</td>
         <td><button class="small" type="button" data-mk="${i}" data-as="start">Ustaw jako start</button> <button class="small" type="button" data-mk="${i}" data-as="end">Ustaw jako koniec</button></td>
-      </tr>`).join('')}</tbody></table></div>`;
+      </tr>`).join('')}</tbody></table></div></div>`;
   }
 
   function updateRangeViews() {
@@ -743,9 +775,10 @@
     $('#rLongest').addEventListener('click', () => setRange(s, { ...SS.Session.defaultRange(s), trimMin: 0 }));
     $('#rAll').addEventListener('click', () => setRange(s, { a: s.t0, b: s.t1, trimMin: 0 }));
 
-    const bench = SS.Benchmark.compute(s, e.a, e.b);
+    const bench = SS.Benchmark.compute(s, e.a, e.b), H = bench.host;
     drawChart(s, e);
-    $('#bScope').textContent = s.host ? `próbki hosta co ~2 s w zakresie ${fmtU(s, e.a)}–${fmtU(s, e.b)}` : '';
+    $('#dVerdict').innerHTML = verdictHtml(s.host || s.st ? SS.Score.vibepollo(s, bench) : null, `${fmtU(s, e.a)}–${fmtU(s, e.b)} (${tfmt(e.b - e.a)})`);
+    $('#bScope').textContent = H ? `${H.n} ${plural(H.n, 'próbka', 'próbki', 'próbek')} hosta co ~2 s · ${H.segments} ${plural(H.segments, 'połączenie', 'połączenia', 'połączeń')} w zakresie` : '';
     $('#dBench').innerHTML = benchHtml(s, bench);
     $('#dClient').innerHTML = clientHtml(s, bench);
   }
@@ -848,25 +881,22 @@
   const scoreChip = sc => sc && sc.overall != null ? `<span class="score-chip s-${SS.Score.cls(sc.overall)}">${num(sc.overall, 1)}</span>` : '<span class="muted">—</span>';
   const scoreTile = (k, p) => {
     const c = SS.Score.cls(p.score), w = p.score == null ? 0 : p.score * 10;
-    return `<div class="score"><div class="top"><b>${SS.Score.LABELS[k]}</b><span class="val s-${c}">${p.score == null ? 'n/d' : num(p.score, 1)}</span></div>
-      <div class="meter"><i class="m-${c}" style="width:${w}%"></i></div><p>${esc(p.why)}</p></div>`;
+    return `<div class="score" tabindex="0"><div class="top"><b>${SS.Score.LABELS[k]}</b><span class="val s-${c}">${p.score == null ? 'n/d' : num(p.score, 1)}</span></div>
+      <div class="meter"><i class="m-${c}" style="width:${w}%"></i></div><p title="${esc(p.why)}">${esc(p.why)}</p></div>`;
   };
   function scoreHtml(sc) {
     if (!sc || sc.overall == null) return '';
     const graded = SS.Score.GRADED.filter(k => sc.parts[k]), info = SS.Score.INFO.filter(k => sc.parts[k]);
-    return `<div class="scorebox">
-      <div class="score-big"><span class="n s-${SS.Score.cls(sc.overall)}">${num(sc.overall, 1)}</span><span class="d">${esc(sc.label)}</span></div>
-      <div class="stack-8">
-        <div><b>Werdykt: ${esc(sc.label)}</b> <span class="muted small">· ${esc(sc.reason)}</span></div>
-        <div class="scores">${graded.map(k => scoreTile(k, sc.parts[k])).join('')}</div>
-      </div>
+    return `<div class="stack-8"><h3>Testy oceny <span class="muted small sub">średnia, najwyżej 1,5 pkt powyżej najsłabszego</span></h3>
+      <div class="scores">${graded.map(k => scoreTile(k, sc.parts[k])).join('')}</div>
     </div>
     ${info.length ? `<div class="stack"><div><b>Wydajność gry i hosta</b> <span class="muted small">· osobno, bez wpływu na werdykt (limit gry i ekrany ładowania to nie problem streamu)</span></div>
       <div class="scores">${info.map(k => scoreTile(k, sc.parts[k])).join('')}</div></div>` : ''}
-    <p class="caveat">Werdykt ocenia zdrowie streamu. Ocena = średnia testów, ale najwyżej 1,5 pkt powyżej najsłabszego. Opóźnienia liczone w okresach klatki, FPS poza oceną (jak w StreamTweak); każdy test podaje źródło danych. Liczona dla wybranego zakresu.</p>`;
+    <p class="caveat">Werdykt ocenia zdrowie streamu: opóźnienia w okresach klatki, FPS poza oceną (jak w StreamTweak), każdy test podaje źródło danych.</p>`;
   }
 
-  const stat = (k, v, unit, hl) => `<div class="stat${hl ? ' hl' : ''}"><span class="k">${k}</span><span class="v">${v}${unit ? ` <small>${unit}</small>` : ''}</span></div>`;
+  const stat = (k, v, unit, hl, note) => `<div class="stat${hl ? ' hl' : ''}"${note ? ` title="${esc(note)}"` : ''}><span class="k${note ? ' note' : ''}">${k}</span><span class="v">${v}${unit ? ` <small>${unit}</small>` : ''}</span></div>`;
+  const group = (title, tiles) => `<div class="stack"><h3 class="group-h">${title}</h3><div class="stats">${tiles}</div></div>`;
 
   // StreamTweak numbers in the range (StreamLight telemetry about once per second + host load).
   function stHtml(b) {
@@ -877,8 +907,8 @@
         ${stat('RTT śr. / maks.', `${num(T.rttAvg, 1)} / ${num(T.rttMax, 0)}`, 'ms', true)}
         ${stat('Jitter śr.', num(T.jitterAvg, 1), 'ms (cała sesja)')}
         ${stat('Dropy', num(T.dropPct, 2), '% klatek')}
-        ${stat('Opóźnienie hosta', num(T.hostLatAvg, 2), `ms, przechwytywanie + enkodowanie${T.hostLatMaxSession ? `; maks. ${num(T.hostLatMaxSession, 0)} ms (sesja)` : ''}`, true)}
-        ${stat('Spóźnione klatki', num(T.latePct, 2), '% ponad 2 okresy (sesja)')}
+        ${stat('Opóźnienie hosta', num(T.hostLatAvg, 2), 'ms', true, `Przechwytywanie + enkodowanie${T.hostLatMaxSession ? `; maks. ${num(T.hostLatMaxSession, 0)} ms w całej sesji` : ''}.`)}
+        ${stat('Spóźnione klatki', num(T.latePct, 2), '%', false, 'Klatki później niż 2 okresy klatki, cała sesja.')}
         ${stat('Dekodowanie', num(T.decodeAvg, 2), 'ms')}
         ${stat('Bitrate dostarczony', num(T.bitrateAvg, 0), T.targetBitrate ? `Mb/s z ${num(T.targetBitrate, 0)} docelowych` : 'Mb/s')}
       </div></div>`;
@@ -892,27 +922,25 @@
     const ev = b.clientEvents;
     const target = s.host.target;
     const pyro = isPyro(s);
-    return scoreHtml(SS.Score.vibepollo(s, b)) + `<div class="stats">
+    return scoreHtml(SS.Score.vibepollo(s, b)) + group('FPS hosta', `
       ${stat('Śr. FPS', num(H.fpsAvg, 2), target ? '/ ' + target : '', true)}
-      ${stat('P50 (mediana)', num(H.fpsP50, 1), '', true)}
-      ${stat('P5', num(H.fpsP5, 1), '', true)}
-      ${stat('P1', num(H.fpsP1, 1), '', true)}
-      ${stat('FPS z frames_sent', num(H.fpsSent, 2), H.fpsSent != null ? `Δ ${num(H.fpsSent - H.fpsAvg, 2)}` : '')}
+      ${stat('P50 (mediana)', num(H.fpsP50, 1))}
+      ${stat('P5', num(H.fpsP5, 1))}
+      ${stat('P1', num(H.fpsP1, 1))}
+      ${stat('FPS z frames_sent', num(H.fpsSent, 2), H.fpsSent != null ? `Δ ${num(H.fpsSent - H.fpsAvg, 2)}` : '', false, 'Kontrola spójności: przyrost wysłanych klatek podzielony przez czas.')}
       ${stat('FPS ≥ 90', num(H.pct90, 1), '% czasu')}
-      ${stat('FPS ≥ 100', num(H.pct100, 1), '% czasu')}
-      ${stat('Bitrate śr. / P95', `${num(H.bitrateAvg, 1)} / ${num(H.bitrateP95, 1)}`, 'Mb/s')}
-      ${stat('Bitrate docelowy / wysyłany / Net TX', `${num(s.host.reqBitrate ? s.host.reqBitrate / 1000 : null, 0)} / ${num(H.bitrateAvg, 0)} / ${num(H.netTxAvg, 0)}`, 'Mb/s (Net TX: cały ruch karty sieciowej hosta)')}
-      ${stat('Enkodowanie śr.', num(H.encAvg, 2), 'ms')}
+      ${stat('FPS ≥ 100', num(H.pct100, 1), '% czasu')}`) + group('Enkodowanie i host', `
+      ${stat('Enkodowanie śr.', num(H.encAvg, 2), 'ms', true)}
       ${stat('Enkodowanie P50 / P95', `${num(H.encP50, 1)} / ${num(H.encP95, 1)}`, 'ms')}
       ${stat('Enkodowanie max', num(H.encMax, 1), 'ms')}
-      ${stat('GPU / enkoder śr.', `${num(H.gpuAvg, 0)} / ${pyro ? 'n/d' : num(H.gpuEncAvg, 0)}`, pyro ? '% (PyroWave liczy na GPU, nie na enkoderze NVENC)' : '%')}
+      ${stat('GPU / enkoder śr.', `${num(H.gpuAvg, 0)} / ${pyro ? 'n/d' : num(H.gpuEncAvg, 0)}`, '%', false, pyro ? 'PyroWave liczy na GPU, nie na enkoderze NVENC, więc obciążenie enkodera nic nie mówi.' : '')}
       ${stat('CPU hosta śr.', num(H.cpuAvg, 0), '%')}
-      ${stat('Temp. GPU max', num(H.gpuTempMax, 0), '°C')}
+      ${stat('Temp. GPU max', num(H.gpuTempMax, 0), '°C')}`) + group('Bitrate i straty', `
+      ${stat('Bitrate śr. / P95', `${num(H.bitrateAvg, 1)} / ${num(H.bitrateP95, 1)}`, 'Mb/s', true)}
+      ${stat('Docelowy / wysyłany / Net TX', `${num(s.host.reqBitrate ? s.host.reqBitrate / 1000 : null, 0)} / ${num(H.bitrateAvg, 0)} / ${num(H.netTxAvg, 0)}`, 'Mb/s', false, 'Net TX to cały ruch karty sieciowej hosta, nie tylko stream.')}
       ${stat('Straty / dropy wideo', `${H.losses} / ${H.videoDropped}`)}
       ${stat('IDR / ref. invalid.', `${H.idr} / ${H.refInv}`)}
-      ${stat('RFI / IDR u klienta', s.clients.length ? `${ev.rfi} / ${ev.idr}` : '—', ev.overflow ? `+${ev.overflow} przepełn.` : '')}
-      ${stat('Próbki / połączenia', `${H.n} / ${H.segments}`)}
-    </div>` + stHtml(b);
+      ${stat('RFI / IDR u klienta', s.clients.length ? `${ev.rfi} / ${ev.idr}` : '—', ev.overflow ? `+${ev.overflow} przepełn.` : '')}`) + stHtml(b);
   }
 
   const yesNo = v => v == null ? '—' : v ? 'tak' : 'nie';
@@ -932,8 +960,8 @@
         ${stat('Wyświetlane FPS', num(T.fpsShown, 2), '', true)}
         ${stat('Odbierane FPS', num(T.fpsRecv, 2))}
         ${stat('Wyświetlane P5 / P1', `${num(T.fpsShownP5, 0)} / ${num(T.fpsShownP1, 0)}`, 'kl./s')}
-        ${stat('Odbiór → ekran (P50)', num(T.lat50, 1), 'ms', true)}
-        ${stat('Odbiór → ekran (P95)', num(T.lat95, 1), `ms, najgorsze 5% sekund ${num(T.lat95Worst, 1)}`)}
+        ${stat('Odbiór → ekran (P50)', num(T.lat50, 1), 'ms')}
+        ${stat('Odbiór → ekran (P95)', num(T.lat95, 1), 'ms', false, `Najgorsze 5% sekund: ${num(T.lat95Worst, 1)} ms.`)}
         ${stat('Dekodowanie (P50)', num(T.dec50, 2), 'ms')}
         ${stat('Odrzucone klatki', num(T.dropped, 0), `${num(T.droppedPerMin, 1)}/min`)}
         ${T.lost != null ? stat('Zgubione w sieci', num(T.lost, 0), `klatek (${num(T.lostPct, 2)}%)`) : ''}
@@ -961,7 +989,7 @@
       ${hasStats ? `<div class="stats">
         ${stat('Odbierane FPS', num(x.incoming, 2), '', true)}
         ${stat('Dekodowane FPS', num(x.decoding, 2))}
-        ${stat('Renderowane FPS', num(x.rendering, 2), '', true)}
+        ${stat('Renderowane FPS', num(x.rendering, 2))}
         ${stat('Utrata sieć / jitter', `${num(x.netLossPct, 2)} / ${num(x.jitterLossPct, 2)}`, '%')}
         ${stat('Opóźnienie sieci', num(x.netLatency, 0), x.netVariance != null ? `ms (wariancja ${num(x.netVariance, 0)})` : 'ms')}
         ${stat('Dekodowanie', num(x.decodeMs, 2), 'ms')}
@@ -991,8 +1019,8 @@
       ...d.epsBusy.map(e => ({ ...e, kind: 'Spadek przy obciążonym GPU', cls: 'raw' }))
     ].sort((a, b) => a.t - b.t);
     return `<div class="panel-head"><h2 id="dgTitle">Diagnostyka całej sesji</h2>
-        <div class="actions"><span class="muted small">Analiza:</span><span class="pill ${d.status}">${statusLabel[d.status]}</span><span class="muted small">Vibepollo:</span><span class="pill raw">${esc(d.verdict || '?')}</span></div></div>
-      ${d.verdictNote ? `<p class="caveat">${esc(d.verdictNote)}</p>` : ''}
+        <span class="diag ${d.status}">${statusLabel[d.status]}</span></div>
+      <p class="caveat">Ocena całego pliku hosta, osobna od wyniku zakresu.${d.verdictNote ? ' ' + esc(d.verdictNote) : d.verdict ? ` Pole verdict z Vibepollo: „${esc(d.verdict)}” (tylko informacyjnie).` : ''}</p>
       <div class="findings">${findings.map(f => `<div class="finding ${f.sev}"><span class="bar"></span><div><h3>${esc(f.title)}</h3><p>${esc(f.text)}</p></div></div>`).join('')}</div>
       ${eps.length ? `<details><summary>Epizody (${eps.length})</summary><div class="tablewrap"><table>
         <thead><tr><th class="num">Moment</th><th>Typ</th><th class="num">Długość</th><th class="num">FPS min</th><th class="num">CPU śr.</th><th class="num">GPU śr.</th><th class="num">IDR / ref.</th></tr></thead>
@@ -1024,92 +1052,11 @@
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
   }
 
-  // ---------- history & compare ----------
-  function renderHistory() {
-    const list = SS.History.load();
-    $('#histCount').textContent = list.length ? `(${list.length})` : '';
-    const body = $('#histBody');
-    [...state.compare].forEach(id => { if (!list.find(x => x.id === id)) state.compare.delete(id); });
-    if (!list.length) { body.innerHTML = `<tr><td colspan="12" class="empty">Brak zapisanych sesji. W widoku Analiza wybierz zakres i kliknij „Zapisz do historii”.</td></tr>`; }
-    else body.innerHTML = list.map(x => `<tr>
-        <td><input type="checkbox" data-cmp="${esc(x.id)}" ${state.compare.has(x.id) ? 'checked' : ''} aria-label="Porównaj: ${esc(x.app)}, ${date(x.date)}"></td>
-        <td class="num">${date(x.date)}</td><td class="app">${esc(x.app)}</td><td>${esc(x.streamer || '—')}</td>
-        <td class="mono small">${esc([x.codec, x.resolution && x.resolution.replace('x', '×') + (x.target_fps ? '@' + x.target_fps : ''), x.bitrate_setting_mbps ? x.bitrate_setting_mbps + ' Mb/s' : ''].filter(Boolean).join(' '))}</td>
-        <td class="small">${esc(x.range || '')}</td>
-        <td class="num">${x.scores && x.scores.overall != null ? `<span class="score-chip s-${SS.Score.cls(x.scores.overall)}">${num(x.scores.overall, 1)}</span>` : '—'}</td>
-        <td class="num">${x.host ? num(x.host.avg_fps, 2) : '—'}</td><td class="num">${x.host ? num(x.host.p5_fps, 1) : '—'}</td>
-        <td class="num">${x.host ? num(x.host.encode_p95_ms, 1) : '—'}</td><td class="num">${x.host ? num(x.host.bitrate_avg_mbps, 1) : '—'}</td>
-        <td><button class="small" type="button" data-del="${esc(x.id)}" aria-label="Usuń z historii: ${esc(x.app)}, ${date(x.date)}">Usuń</button></td></tr>`).join('');
-    body.querySelectorAll('[data-cmp]').forEach(cb => cb.addEventListener('change', () => {
-      cb.checked ? state.compare.add(cb.dataset.cmp) : state.compare.delete(cb.dataset.cmp);
-      $('#compareBtn').disabled = state.compare.size < 2;
-    }));
-    body.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', () => {
-      if (!confirm('Usunąć tę sesję z historii?')) return;
-      SS.History.remove(b.dataset.del); state.compare.delete(b.dataset.del); renderHistory(); renderCompare();
-    }));
-    $('#compareBtn').disabled = state.compare.size < 2;
-  }
-
-  const CMP_ROWS = [
-    ['Oceny (1–10)', null],
-    ['Ocena ogólna', x => x.scores && x.scores.overall, 1],
-    ...['drops', 'rtt', 'hostlat', 'late', 'pacing', 'e2e'].map(k => [SS.Score.LABELS[k], x => x.scores && x.scores[k], 1]),
-    ...['fps', 'image', 'headroom'].map(k => [`${SS.Score.LABELS[k]} (info)`, x => x.scores && x.scores[k], 1]),
-    ['Konfiguracja', null],
-    ['Klient', x => x.streamer], ['Tryb', x => [x.codec, x.resolution, x.target_fps && '@' + x.target_fps].filter(Boolean).join(' ')],
-    ['Bitrate ustawiony (Mb/s)', x => x.bitrate_setting_mbps, 0], ['Długość zakresu', x => x.duration_s, 't'],
-    ['Host', null],
-    ['Śr. FPS', x => x.host && x.host.avg_fps, 2], ['P50 FPS', x => x.host && x.host.p50_fps, 1], ['P5 FPS', x => x.host && x.host.p5_fps, 1], ['P1 FPS', x => x.host && x.host.p1_fps, 1],
-    ['FPS z frames_sent', x => x.host && x.host.frames_sent_fps, 2], ['FPS ≥ 90 (%)', x => x.host && x.host.pct_ge_90, 1], ['FPS ≥ 100 (%)', x => x.host && x.host.pct_ge_100, 1],
-    ['Bitrate śr. (Mb/s)', x => x.host && x.host.bitrate_avg_mbps, 1], ['Bitrate P95 (Mb/s)', x => x.host && x.host.bitrate_p95_mbps, 1],
-    ['Enkodowanie śr. (ms)', x => x.host && x.host.encode_avg_ms, 2], ['Enkodowanie P95 (ms)', x => x.host && x.host.encode_p95_ms, 1],
-    ['GPU śr. (%)', x => x.host && x.host.gpu_avg_pct, 0], ['Enkoder śr. (%)', x => x.host && x.host.encoder_avg_pct, 0],
-    ['Straty / dropy', x => x.host && x.host.client_reported_losses != null ? `${x.host.client_reported_losses} / ${x.host.video_dropped}` : null],
-    ['Klient (cały stream)', null],
-    ['Odbierane FPS', x => x.client && x.client.incoming_fps, 2], ['Renderowane FPS', x => x.client && x.client.rendering_fps, 2],
-    ['Utrata sieć (%)', x => x.client && x.client.network_loss_pct, 2], ['Utrata jitter (%)', x => x.client && x.client.jitter_loss_pct, 2],
-    ['Opóźnienie sieci (ms)', x => x.client && x.client.network_latency_ms, 0], ['Dekodowanie (ms)', x => x.client && x.client.decode_ms, 2],
-    ['Kolejka (ms)', x => x.client && x.client.queue_ms, 2], ['Renderowanie (ms)', x => x.client && x.client.render_ms, 2],
-    ['VRR', x => x.client && x.client.vrr], ['Smoothness 2m (%)', x => x.client && x.client.smoothness_2m_pct, 2],
-    ['RFI w zakresie', x => x.client_events && x.client_events.rfi, 0],
-    ['Steam Remote Play', null],
-    ['Ping (ms)', x => x.steam && x.steam.ping_ms, 2], ['Sieć – transfer klatki (ms)', x => x.steam && x.steam.network_ms, 2],
-    ['Czas klatki (ms)', x => x.steam && x.steam.frame_ms, 2], ['Enkodowanie Steam (ms)', x => x.steam && x.steam.encode_ms, 2],
-    ['Dekodowanie Steam (ms)', x => x.steam && x.steam.decode_ms, 2], ['Wyświetlanie (ms)', x => x.steam && x.steam.display_ms, 2],
-    ['Przepustowość łącza (Mb/s)', x => x.steam && x.steam.link_mbps, 0],
-    ['Wolne: sieć (% czasu)', x => x.steam && x.steam.slow_pct && x.steam.slow_pct.network, 2],
-    ['Wolne: gra (% czasu)', x => x.steam && x.steam.slow_pct && x.steam.slow_pct.game, 2],
-    ['Wolne: dekodowanie (% czasu)', x => x.steam && x.steam.slow_pct && x.steam.slow_pct.decode, 2]
-  ];
-  function renderCompare() {
-    const panel = $('#comparePanel');
-    const list = SS.History.load().filter(x => state.compare.has(x.id)).sort((a, b) => a.date - b.date);
-    if (list.length < 2) { panel.hidden = true; return; }
-    panel.hidden = false;
-    const two = list.length === 2;
-    const cell = (v, d) => v == null || v === '' ? '—' : d === 't' ? tfmt(v) : typeof d === 'number' && typeof v === 'number' ? num(v, d) : esc(v);
-    panel.innerHTML = `<div class="panel-head"><h2>Porównanie</h2><span class="muted small">Różnica = kolumna 2 minus kolumna 1. Ocena należy do Ciebie.</span></div>
-      <div class="tablewrap"><table>
-        <thead><tr><th>Metryka</th>${list.map(x => `<th class="num">${esc(x.app)}<br><span class="muted sub">${date(x.date)}</span></th>`).join('')}${two ? '<th class="num">Różnica</th>' : ''}</tr></thead>
-        <tbody>${CMP_ROWS.map(([k, f, d]) => {
-          if (!f) return `<tr><td colspan="${list.length + (two ? 2 : 1)}" class="eyebrow group">${k}</td></tr>`;
-          const vals = list.map(f);
-          let diff = '';
-          if (two) {
-            const [a, b] = vals;
-            diff = typeof a === 'number' && typeof b === 'number' && typeof d === 'number' ? `${b - a > 0 ? '+' : ''}${num(b - a, d)}` : d === 't' && a != null && b != null ? `${b - a >= 0 ? '+' : '-'}${tfmt(Math.abs(b - a))}` : '';
-          }
-          return `<tr><td>${k}</td>${vals.map(v => `<td class="num">${cell(v, d)}</td>`).join('')}${two ? `<td class="num">${diff}</td>` : ''}</tr>`;
-        }).join('')}</tbody></table></div>`;
-  }
-
   // ---------- wiring ----------
   function showTab(which) {
-    const tabs = { analyze: ['#tabAnalyze', '#viewAnalyze'], history: ['#tabHistory', '#viewHistory'], settings: ['#tabSettings', '#viewSettings'] };
+    const tabs = { analyze: ['#tabAnalyze', '#viewAnalyze'], settings: ['#tabSettings', '#viewSettings'] };
     for (const [k, [t, v]] of Object.entries(tabs)) { $(t).setAttribute('aria-selected', k === which); $(t).tabIndex = k === which ? 0 : -1; $(v).hidden = k !== which; }
-    if (which === 'history') renderHistory();
-    else if (which === 'settings') SS.Settings.render($('#viewSettings'), { onSaved: () => {}, statusHtml: () => state.agent ? agentStatusHtml() : '' });
+    if (which === 'settings') SS.Settings.render($('#viewSettings'), { onSaved: () => {}, statusHtml: () => state.agent ? agentStatusHtml() : '' });
     else { const s = current(); if (s) updateRangeViews(); }
   }
   document.querySelectorAll('#sessFilter [data-f]').forEach(b => b.addEventListener('click', () => {
@@ -1124,7 +1071,6 @@
     renderSessions();
   }));
   $('#tabAnalyze').addEventListener('click', () => showTab('analyze'));
-  $('#tabHistory').addEventListener('click', () => showTab('history'));
   $('#tabSettings').addEventListener('click', () => showTab('settings'));
   // Tablist keyboard: arrows/Home/End move between visible tabs and activate them.
   $('nav.tabs').addEventListener('keydown', e => {
@@ -1146,23 +1092,11 @@
   $('#pickBtn').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#files').click(); } });
   $('#clearBtn').addEventListener('click', async () => {
     if (!state.hosts.size && !state.logs.size && !state.steam.size) return;
-    if (!confirm('Usunąć wszystkie wczytane pliki z pamięci tej przeglądarki? Zapisane podsumowania w Historii zostaną.')) return;
+    if (!confirm('Usunąć wszystkie wczytane pliki z pamięci tej przeglądarki?')) return;
     await SS.Store.clearAll().catch(() => {});
     state.hosts.clear(); state.logs.clear(); state.diag.clear(); state.ranges.clear();
     state.steam.clear(); state.steamSel.clear(); state.hidden.clear();
     state.selected = null; notice(''); rebuild(); storageInfo();
-  });
-
-  $('#compareBtn').addEventListener('click', () => { renderCompare(); $('#comparePanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
-  $('#exportBtn').addEventListener('click', () => download(`streamscope-backup-${new Date().toISOString().slice(0, 10)}.json`, SS.History.exportJson()));
-  $('#importBtn').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#importFile').click(); } });
-  $('#importFile').addEventListener('change', async e => {
-    const f = e.target.files[0]; e.target.value = '';
-    if (!f) return;
-    const n = $('#histNotice'); n.hidden = false;
-    try { const k = SS.History.importJson(await f.text()); n.className = 'notice ok'; n.textContent = `Zaimportowano ${k} sesji.`; }
-    catch (err) { n.className = 'notice err'; n.textContent = `Nie udało się zaimportować: ${err.message}`; }
-    renderHistory();
   });
 
   let rz;
@@ -1171,6 +1105,5 @@
   // Test hook: lets tests.html drive the app with files fetched from disk.
   SS.app = { addFiles, state, effRange, setRange, current };
   rebuild();
-  renderHistory();
   restore();
 })();

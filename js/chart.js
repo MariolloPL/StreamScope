@@ -42,7 +42,7 @@ SS.Chart = (() => {
         svg += `<line x1="${padL}" x2="${W - padR}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"${v ? ' stroke-dasharray="3 4"' : ''}/>`;
         svg += `<text x="${padL - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" font-family="${MONO}" fill="var(--muted)">${Math.round(v)}</text>`;
       });
-      svg += `<text x="${padL + 5}" y="${top + 12}" font-size="11" fill="var(--muted)">${p.label}</text>`;
+      svg += `<text x="${padL + 5}" y="${top + 12}" font-size="12" fill="var(--muted)">${p.label}</text>`;
       (p.refLines || []).forEach(r => {
         if (r.v == null || r.v > pmax) return;
         svg += `<line x1="${padL}" x2="${W - padR}" y1="${y(r.v)}" y2="${y(r.v)}" stroke="${r.c}" stroke-opacity=".55" stroke-dasharray="6 4"/>`;
@@ -81,7 +81,7 @@ SS.Chart = (() => {
           const lx = x(sl.u) + 4, row = ends.findIndex(e => lx > e + 8);
           if (row < 0) return;
           ends[row] = lx + sl.label.length * 6.4;
-          svg += `<text x="${lx.toFixed(1)}" y="${top + 24 + row * 13}" font-size="10.5" font-family="${MONO}" fill="var(--muted)" stroke="var(--surface)" stroke-width="3" paint-order="stroke">${sl.label.replace(/[<&]/g, '')}</text>`;
+          svg += `<text x="${lx.toFixed(1)}" y="${top + 24 + row * 13}" font-size="11.5" font-family="${MONO}" fill="var(--muted)" stroke="var(--surface)" stroke-width="3" paint-order="stroke">${sl.label.replace(/[<&]/g, '')}</text>`;
         });
       }
       // Detected gameplay as a strip along the bottom of the first panel.
