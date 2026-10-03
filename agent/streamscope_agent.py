@@ -441,7 +441,7 @@ class Vibepollo:
         t0 = time.time()
         # Healthy sessions come back in seconds; some the panel never answers (and it stalls meanwhile),
         # so a moderate timeout plus skip-after-retries beats waiting minutes.
-        d = self.get(path, timeout=90)
+        d = self.get(path, timeout=150)
         full = isinstance(d, dict) and (d.get("samples_truncated") or d.get("events_truncated"))
         if full:
             try:
@@ -548,6 +548,7 @@ def collect_vibepollo(cfg, arc, status, state):
     done = set(state.get("vibepollo_groups", []))
     fails = state.setdefault("vibepollo_failures", {})     # group key → failed attempts
     MAX_TRIES = 2
+    RECENT = 7 * 86400   # newer sessions are never given up on: the panel only stalls now and then
     gkey = lambda g: ",".join(sorted(_sid(i) for i in g))
     # Sessions already in the archive (e.g. imported manual exports) need no download: same name = same session.
     for g in groups:
@@ -555,7 +556,9 @@ def collect_vibepollo(cfg, arc, status, state):
             done.add(gkey(g))
     state["vibepollo_groups"] = sorted(done)
     pending = [g for g in reversed(groups) if gkey(g) not in done]                       # newest first
-    todo = [g for g in pending if fails.get(gkey(g), 0) < MAX_TRIES]
+    recent = lambda g: (g[-1].get("end_time_unix") or 0) > time.time() - RECENT
+    gives_up = lambda g: fails.get(gkey(g), 0) >= MAX_TRIES and not recent(g)
+    todo = [g for g in pending if not gives_up(g)]
     skipped = len(pending) - len(todo)
     saved, failed_in_row, failed = 0, 0, 0
     for n, g in enumerate(todo, 1):
@@ -581,7 +584,7 @@ def collect_vibepollo(cfg, arc, status, state):
         arc.write_doc("agent_state.json", state)   # keep progress even if the agent is closed mid-way
         saved += 1
     left = len(todo) - saved
-    skipped_all = skipped + sum(1 for g in todo if fails.get(gkey(g), 0) >= MAX_TRIES)
+    skipped_all = skipped + sum(1 for g in todo if gives_up(g))
     note = f"; panel nie oddał {skipped_all} starszych sesji (pominięte, szczegóły w agent.log)" if skipped_all else ""
     if left > (skipped_all - skipped):
         status.set("vibepollo", True, f"pobrano {saved}, zostało {left - (skipped_all - skipped)} (ponowię za 2 min){note}", sessions=len(finished))
