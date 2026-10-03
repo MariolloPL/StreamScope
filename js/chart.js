@@ -74,9 +74,16 @@ SS.Chart = (() => {
       });
 
       // Connection labels (S1 · codec mode) next to each reconnect line, top of the first panel.
-      if (pi === 0) (opts.segLabels || []).forEach(sl => {
-        svg += `<text x="${(x(sl.u) + 4).toFixed(1)}" y="${top + 24}" font-size="10.5" font-family="${MONO}" fill="var(--muted)">${sl.label.replace(/[<&]/g, '')}</text>`;
-      });
+      // Labels that would collide drop to a second line; a third collision is skipped (the tooltip still has it).
+      if (pi === 0) {
+        const ends = [-Infinity, -Infinity];
+        (opts.segLabels || []).forEach(sl => {
+          const lx = x(sl.u) + 4, row = ends.findIndex(e => lx > e + 8);
+          if (row < 0) return;
+          ends[row] = lx + sl.label.length * 6.4;
+          svg += `<text x="${lx.toFixed(1)}" y="${top + 24 + row * 13}" font-size="10.5" font-family="${MONO}" fill="var(--muted)" stroke="var(--surface)" stroke-width="3" paint-order="stroke">${sl.label.replace(/[<&]/g, '')}</text>`;
+        });
+      }
       // Detected gameplay as a strip along the bottom of the first panel.
       if (pi === 0) (opts.bands || []).forEach(bd => { svg += rect(bd.a, bd.b, top + p.h - 5, 5, bd.fill, ' opacity=".8"'); });
       // Client events as ticks along the top of the first panel.

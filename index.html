@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="css/app.css?v=202610031913">
+<link rel="stylesheet" href="css/app.css?v=202610031919">
 </head>
 <body>
 <div class="wrap">
@@ -56,10 +56,10 @@
       </div>
       <span class="muted small" id="sessCount"></span>
       <span class="muted small" id="hiddenInfo" hidden></span>
-      <table class="sessions">
+      <div class="sess-scroll"><table class="sessions">
         <thead><tr><th>Diagnostyka</th><th class="num" title="Ocena ogólna 1–10 dla wybranego zakresu">Wynik</th><th>Aplikacja · tryb</th><th>Start · czas</th><th>Klient</th><th class="num">FPS typowe</th><th>Znaleziska</th></tr></thead>
         <tbody id="sessBody"></tbody>
-      </table>
+      </table></div>
     </section>
 
     <section class="panel" id="cmpView" hidden></section>
@@ -111,19 +111,19 @@
   <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
 </div>
 
-<script src="js/core.js?v=202610031913"></script>
-<script src="js/parsers/vibepollo.js?v=202610031913"></script>
-<script src="js/parsers/clientlog.js?v=202610031913"></script>
-<script src="js/parsers/streamtweak.js?v=202610031913"></script>
-<script src="js/parsers/steamlog.js?v=202610031913"></script>
-<script src="js/engine/diagnostics.js?v=202610031913"></script>
-<script src="js/engine/gameplay.js?v=202610031913"></script>
-<script src="js/engine/score.js?v=202610031913"></script>
-<script src="js/engine/session.js?v=202610031913"></script>
-<script src="js/storage.js?v=202610031913"></script>
-<script src="js/store.js?v=202610031913"></script>
-<script src="js/chart.js?v=202610031913"></script>
-<script src="js/settings.js?v=202610031913"></script>
-<script src="js/app.js?v=202610031913"></script>
+<script src="js/core.js?v=202610031919"></script>
+<script src="js/parsers/vibepollo.js?v=202610031919"></script>
+<script src="js/parsers/clientlog.js?v=202610031919"></script>
+<script src="js/parsers/streamtweak.js?v=202610031919"></script>
+<script src="js/parsers/steamlog.js?v=202610031919"></script>
+<script src="js/engine/diagnostics.js?v=202610031919"></script>
+<script src="js/engine/gameplay.js?v=202610031919"></script>
+<script src="js/engine/score.js?v=202610031919"></script>
+<script src="js/engine/session.js?v=202610031919"></script>
+<script src="js/storage.js?v=202610031919"></script>
+<script src="js/store.js?v=202610031919"></script>
+<script src="js/chart.js?v=202610031919"></script>
+<script src="js/settings.js?v=202610031919"></script>
+<script src="js/app.js?v=202610031919"></script>
 </body>
 </html>

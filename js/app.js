@@ -166,7 +166,7 @@
     const a = state.agent, src = a.sources || {};
     const items = Object.keys(SOURCE_LABEL).filter(k => src[k]).map(k => {
       const s = src[k];
-      return `<span class="chip ${s.ok ? 'good' : 'bad'}" title="${esc(s.msg)}">${SOURCE_LABEL[k]}: ${esc(s.ok ? s.msg.replace(/^OK,?\s*/, '') || 'OK' : s.msg)}</span>`;
+      return `<span class="chip${s.ok ? '' : ' bad'}" title="${esc(s.msg)}">${SOURCE_LABEL[k]}: ${esc(s.ok ? s.msg.replace(/^OK,?\s*/, '') || 'OK' : s.msg)}</span>`;
     }).join(' ');
     return `<div class="row">
       <button class="primary small" type="button" id="collectBtn" ${a.running ? 'disabled' : ''}>${a.running ? 'Agent pobiera dane…' : 'Pobierz nowe dane'}</button>
@@ -386,7 +386,6 @@
       <section class="panel" aria-labelledby="dTitle">
         <div class="panel-head">
           <div class="stack">
-            <div class="eyebrow">Sesja Steam Remote Play</div>
             <h2 id="dTitle">${esc(s.app)} <span class="muted sub">· Steam → ${esc(c.client)}</span></h2>
             <div class="chips">${chips.map(x => `<span class="chip">${esc(x)}</span>`).join('')}${last.pyrowave ? '<span class="chip good">PyroWave</span>' : ''}</div>
             ${bitrates ? `<div class="muted small">Docelowy bitrate ustawiany przez Steam: ${esc(bitrates)}</div>` : ''}
@@ -542,8 +541,7 @@
     if (!A || !B) { box.hidden = true; box.innerHTML = ''; return; }
     const va = sessionView(A), vb = sessionView(B);
     const head = v => `<div class="stack">
-        <div class="eyebrow">${v === va ? 'Sesja A' : 'Sesja B'}</div>
-        <h3>${esc(v.s.app)} <span class="muted sub">· ${esc(sessLabel(v.s).split(' · ').slice(2).join(' · '))}</span></h3>
+        <h3><span class="ab${v === va ? '' : ' b'}" title="${v === va ? 'Sesja A (linia ciągła)' : 'Sesja B (linia przerywana)'}">${v === va ? 'A' : 'B'}</span>${esc(v.s.app)} <span class="muted sub">· ${esc(sessLabel(v.s).split(' · ').slice(2).join(' · '))}</span></h3>
         <div class="chips"><span class="chip">${shortDate(v.s.t0)}</span><span class="chip">${esc(modeOf(v.s))}</span><span class="chip">zakres ${esc(v.range)} (${tfmt(v.dur)})</span></div>
         ${v.sc && v.sc.overall != null ? `<div class="row wide"><span class="score-big sm"><span class="n s-${SS.Score.cls(v.sc.overall)}">${num(v.sc.overall, 1)}</span><span class="d">${esc(v.sc.label)}</span></span><span class="small muted">${esc(v.sc.reason)}</span></div>` : '<span class="muted small">brak oceny</span>'}
       </div>`;
@@ -615,7 +613,6 @@
       <section class="panel" aria-labelledby="dTitle">
         <div class="panel-head">
           <div class="stack">
-            <div class="eyebrow">Sesja</div>
             <h2 id="dTitle">${esc(s.app)}${h ? ` <span class="muted sub">· ${esc(h.client)}</span>` : ''}</h2>
             <div class="chips">${chips.map(c => `<span class="chip">${esc(c)}</span>`).join('')}${syncChip}</div>
           </div>
