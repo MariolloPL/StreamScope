@@ -8,6 +8,7 @@
     if (el && v) el.textContent = 'wersja ' + v.replace(/^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)$/, '$1-$2-$3 $4:$5');
   }
   const $ = s => document.querySelector(s);
+  const announce = msg => { const el = $('#announce'); el.textContent = ''; setTimeout(() => { el.textContent = msg; }, 50); };
   const { fmt: tfmt, parse: tparse, clock, date } = SS.time;
   const { num, esc } = SS.fmt;
   const DIAG_OPTS = { trimStart: 60, trimEnd: 20 };
@@ -167,7 +168,7 @@
       const s = src[k];
       return `<span class="chip ${s.ok ? 'good' : 'bad'}" title="${esc(s.msg)}">${SOURCE_LABEL[k]}: ${esc(s.ok ? s.msg.replace(/^OK,?\s*/, '') || 'OK' : s.msg)}</span>`;
     }).join(' ');
-    return `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+    return `<div class="row">
       <button class="primary small" type="button" id="collectBtn" ${a.running ? 'disabled' : ''}>${a.running ? 'Agent pobiera dane…' : 'Pobierz nowe dane'}</button>
       <span><b>Agent na ${esc(a.host)}</b> · ${a.files} plików w archiwum${a.last_run ? ` · ostatnie pobranie ${shortDate(a.last_run)}` : ''}. Logi K12 dochodzą same po uruchomieniu i zamknięciu StreamLighta; Vibepollo i Steam pobiera przycisk.</span>
       ${items}</div>`;
@@ -256,7 +257,7 @@
       $('#unhideBtn').onclick = restoreHidden;
     }
     if (!S.length) { body.innerHTML = `<tr><td colspan="7" class="empty">Brak plików. Przeciągnij pliki powyżej.</td></tr>`; return; }
-    const row = (s, pill, fps, tags) => `<tr class="pick${s.id === state.selected ? ' sel' : ''}" data-id="${esc(s.id)}" tabindex="0">
+    const row = (s, pill, fps, tags) => `<tr class="pick${s.id === state.selected ? ' sel' : ''}" data-id="${esc(s.id)}" tabindex="0"${s.id === state.selected ? ' aria-current="true"' : ''}>
         <td>${pill}</td>
         <td class="num">${scoreChip(sessionScore(s))}</td>
         <td><div class="app">${esc(s.app)}</div><div class="mono small muted">${esc(modeOf(s))}</div></td>
@@ -281,7 +282,14 @@
       return row(s, d ? `<span class="pill ${d.status}">${statusLabel[d.status]}</span>` : '<span class="pill raw">bez hosta</span>', fps, tags);
     }).join('');
     body.querySelectorAll('tr.pick').forEach(tr => {
-      const pick = () => { state.selected = tr.dataset.id; renderSessions(); renderDetail(); $('#detail').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+      const pick = () => {
+        const id = tr.dataset.id;
+        state.selected = id; renderSessions(); renderDetail();
+        const again = body.querySelector(`tr[data-id="${CSS.escape(id)}"]`); if (again) again.focus({ preventScroll: true });
+        $('#detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const cur = current(), sc = cur && sessionScore(cur);
+        if (cur) announce(`Wybrano ${cur.app}, ${shortDate(cur.t0)}` + (sc && sc.overall != null ? `, wynik ${num(sc.overall, 1)}` : ''));
+      };
       tr.addEventListener('click', pick);
       tr.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
     });
@@ -311,6 +319,8 @@
     updateRangeViews();
     renderSessions();   // the table's score follows the chosen range
     if (state.compareWith) renderSideBySide();
+    const e = effRange(s), sc = sessionScore(s);
+    announce(`Zakres ${fmtU(s, e.a)} – ${fmtU(s, e.b)}` + (sc && sc.overall != null ? `, wynik ${num(sc.overall, 1)}` : ''));
   }
 
   // Bring back sessions hidden with "Usuń sesję z pamięci" (agent mode / Steam keep files and only hide).
@@ -375,9 +385,9 @@
     el.innerHTML = `
       <section class="panel" aria-labelledby="dTitle">
         <div class="panel-head">
-          <div style="display:grid;gap:6px;min-width:0">
+          <div class="stack">
             <div class="eyebrow">Sesja Steam Remote Play</div>
-            <h2 id="dTitle">${esc(s.app)} <span class="muted" style="font-weight:500">· Steam → ${esc(c.client)}</span></h2>
+            <h2 id="dTitle">${esc(s.app)} <span class="muted sub">· Steam → ${esc(c.client)}</span></h2>
             <div class="chips">${chips.map(x => `<span class="chip">${esc(x)}</span>`).join('')}${last.pyrowave ? '<span class="chip good">PyroWave</span>' : ''}</div>
             ${bitrates ? `<div class="muted small">Docelowy bitrate ustawiany przez Steam: ${esc(bitrates)}</div>` : ''}
           </div>
@@ -531,16 +541,16 @@
     const A = cw && state.sessions.find(x => x.id === cw.a), B = cw && state.sessions.find(x => x.id === cw.b);
     if (!A || !B) { box.hidden = true; box.innerHTML = ''; return; }
     const va = sessionView(A), vb = sessionView(B);
-    const head = v => `<div style="display:grid;gap:6px;min-width:0">
+    const head = v => `<div class="stack">
         <div class="eyebrow">${v === va ? 'Sesja A' : 'Sesja B'}</div>
-        <h3>${esc(v.s.app)} <span class="muted" style="font-weight:400">· ${esc(sessLabel(v.s).split(' · ').slice(2).join(' · '))}</span></h3>
+        <h3>${esc(v.s.app)} <span class="muted sub">· ${esc(sessLabel(v.s).split(' · ').slice(2).join(' · '))}</span></h3>
         <div class="chips"><span class="chip">${shortDate(v.s.t0)}</span><span class="chip">${esc(modeOf(v.s))}</span><span class="chip">zakres ${esc(v.range)} (${tfmt(v.dur)})</span></div>
-        ${v.sc && v.sc.overall != null ? `<div style="display:flex;gap:12px;align-items:center"><span class="score-big" style="min-width:90px;padding:6px 12px"><span class="n s-${SS.Score.cls(v.sc.overall)}" style="font-size:34px">${num(v.sc.overall, 1)}</span><span class="d">${esc(v.sc.label)}</span></span><span class="small muted">${esc(v.sc.reason)}</span></div>` : '<span class="muted small">brak oceny</span>'}
+        ${v.sc && v.sc.overall != null ? `<div class="row wide"><span class="score-big sm"><span class="n s-${SS.Score.cls(v.sc.overall)}">${num(v.sc.overall, 1)}</span><span class="d">${esc(v.sc.label)}</span></span><span class="small muted">${esc(v.sc.reason)}</span></div>` : '<span class="muted small">brak oceny</span>'}
       </div>`;
     const diff = (a, b, d) => a == null || b == null ? '' : `${b - a > 0 ? '+' : ''}${num(b - a, d)}`;
     const cell = (v, d) => v == null ? '—' : num(v, d);
     const rows = [
-      `<tr><td colspan="4" class="eyebrow" style="padding-top:10px">Testy oceny (1–10)</td></tr>`,
+      `<tr><td colspan="4" class="eyebrow group">Testy oceny (1–10)</td></tr>`,
       ...SS.Score.GRADED.map(k => {
         const pa = va.sc && va.sc.parts[k], pb = vb.sc && vb.sc.parts[k];
         const a = pa ? pa.score : null, b = pb ? pb.score : null;
@@ -551,7 +561,7 @@
         const mixed = pa && pb && src(pa) && src(pb) && norm(src(pa)) !== norm(src(pb));
         return a == null && b == null ? '' : `<tr><td>${SS.Score.LABELS[k]}${mixed ? ` <span class="pill warn" title="A: ${esc(src(pa))} | B: ${esc(src(pb))}">różne źródła</span>` : ''}</td><td class="num s-${SS.Score.cls(a)}">${cell(a, 1)}</td><td class="num s-${SS.Score.cls(b)}">${cell(b, 1)}</td><td class="num">${diff(a, b, 1)}</td></tr>`;
       }),
-      `<tr><td colspan="4" class="eyebrow" style="padding-top:10px">Pomiary w zakresie</td></tr>`,
+      `<tr><td colspan="4" class="eyebrow group">Pomiary w zakresie</td></tr>`,
       ...CMP_METRICS.map(([label, k, d, unit]) => {
         const a = va.m[k], b = vb.m[k];
         return a == null && b == null ? '' : `<tr><td>${label}${unit ? ` <span class="muted small">(${unit})</span>` : ''}</td><td class="num">${cell(a, d)}</td><td class="num">${cell(b, d)}</td><td class="num">${diff(a, b, d)}</td></tr>`;
@@ -604,9 +614,9 @@
     el.innerHTML = `
       <section class="panel" aria-labelledby="dTitle">
         <div class="panel-head">
-          <div style="display:grid;gap:6px;min-width:0">
+          <div class="stack">
             <div class="eyebrow">Sesja</div>
-            <h2 id="dTitle">${esc(s.app)}${h ? ` <span class="muted" style="font-weight:500">· ${esc(h.client)}</span>` : ''}</h2>
+            <h2 id="dTitle">${esc(s.app)}${h ? ` <span class="muted sub">· ${esc(h.client)}</span>` : ''}</h2>
             <div class="chips">${chips.map(c => `<span class="chip">${esc(c)}</span>`).join('')}${syncChip}</div>
           </div>
           <div class="actions"><button class="small" type="button" data-compare>Porównaj z…</button><button class="small" type="button" id="removeBtn">Usuń sesję z pamięci</button></div>
@@ -687,8 +697,8 @@
     const gp = (s.host && s.host.gameplay) || [];
     if (!s.host) return '';
     if (!gp.length) return `<p class="muted small">Nie wykryto fragmentów rozgrywki (wysokie obciążenie CPU, stabilny FPS i bitrate przez min. 3 minuty). Ustaw zakres ręcznie albo markerami.</p>`;
-    return `<div style="display:grid;gap:6px">
-      <h3>Wykryta rozgrywka <span class="muted small" style="font-weight:400">automatycznie, bez markerów</span></h3>
+    return `<div class="stack">
+      <h3>Wykryta rozgrywka <span class="muted small sub">automatycznie, bez markerów</span></h3>
       <div class="tablewrap"><table>
         <thead><tr><th class="num">Od</th><th class="num">Do</th><th class="num">Długość</th><th class="num">Godziny</th><th></th></tr></thead>
         <tbody>${gp.map((g, i) => `<tr><td class="num">${fmtU(s, g.a)}</td><td class="num">${fmtU(s, g.b)}</td><td class="num">${tfmt(g.dur)}</td>
@@ -849,12 +859,12 @@
     const graded = SS.Score.GRADED.filter(k => sc.parts[k]), info = SS.Score.INFO.filter(k => sc.parts[k]);
     return `<div class="scorebox">
       <div class="score-big"><span class="n s-${SS.Score.cls(sc.overall)}">${num(sc.overall, 1)}</span><span class="d">${esc(sc.label)}</span></div>
-      <div style="display:grid;gap:8px;min-width:0">
+      <div class="stack-8">
         <div><b>Werdykt: ${esc(sc.label)}</b> <span class="muted small">· ${esc(sc.reason)}</span></div>
         <div class="scores">${graded.map(k => scoreTile(k, sc.parts[k])).join('')}</div>
       </div>
     </div>
-    ${info.length ? `<div style="display:grid;gap:6px"><div><b>Wydajność gry i hosta</b> <span class="muted small">· osobno, bez wpływu na werdykt (limit gry i ekrany ładowania to nie problem streamu)</span></div>
+    ${info.length ? `<div class="stack"><div><b>Wydajność gry i hosta</b> <span class="muted small">· osobno, bez wpływu na werdykt (limit gry i ekrany ładowania to nie problem streamu)</span></div>
       <div class="scores">${info.map(k => scoreTile(k, sc.parts[k])).join('')}</div></div>` : ''}
     <p class="caveat">Werdykt ocenia zdrowie streamu. Ocena = średnia testów, ale najwyżej 1,5 pkt powyżej najsłabszego. Opóźnienia liczone w okresach klatki, FPS poza oceną (jak w StreamTweak); każdy test podaje źródło danych. Liczona dla wybranego zakresu.</p>`;
   }
@@ -865,7 +875,7 @@
   function stHtml(b) {
     const T = b.st;
     if (!T) return '';
-    return `<div style="display:grid;gap:8px"><h3>StreamTweak w zakresie <span class="muted small" style="font-weight:400">telemetria StreamLight, ok. 1 próbka na sekundę</span></h3>
+    return `<div class="stack-8"><h3>StreamTweak w zakresie <span class="muted small sub">telemetria StreamLight, ok. 1 próbka na sekundę</span></h3>
       <div class="stats">
         ${stat('RTT śr. / maks.', `${num(T.rttAvg, 1)} / ${num(T.rttMax, 0)}`, 'ms', true)}
         ${stat('Jitter śr.', num(T.jitterAvg, 1), 'ms (cała sesja)')}
@@ -920,7 +930,7 @@
   function traceRangeHtml(b) {
     const T = b.clientTrace;
     if (!T) return '';
-    return `<div style="display:grid;gap:8px"><h3>Klient w wybranym zakresie <span class="muted small" style="font-weight:400">z diagnostyki VRR Moonlight (klatka po klatce)</span></h3>
+    return `<div class="stack-8"><h3>Klient w wybranym zakresie <span class="muted small sub">z diagnostyki VRR Moonlight (klatka po klatce)</span></h3>
       <div class="stats">
         ${stat('Wyświetlane FPS', num(T.fpsShown, 2), '', true)}
         ${stat('Odbierane FPS', num(T.fpsRecv, 2))}
@@ -947,7 +957,7 @@
       ['Łącze', c.log.info.link || '—']
     ];
     const hasStats = !!st.stats;
-    return `<div style="display:grid;gap:10px;min-width:0">
+    return `<div class="stack-8">
       <div><h3>${esc(c.log.client)} · stream ${st.index + 1} <span class="pill ${vrr === 'active' ? 'ok' : 'raw'}">VRR ${esc(vrr || '?')}</span></h3>
       <div class="muted small">${esc(c.log.name)} · ${tfmt(st.tStart)}–${tfmt(st.tEnd)} w logu · ${clock(c.u0)}–${clock(c.u1)}</div></div>
       <dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
@@ -1025,14 +1035,14 @@
     [...state.compare].forEach(id => { if (!list.find(x => x.id === id)) state.compare.delete(id); });
     if (!list.length) { body.innerHTML = `<tr><td colspan="12" class="empty">Brak zapisanych sesji. W widoku Analiza wybierz zakres i kliknij „Zapisz do historii”.</td></tr>`; }
     else body.innerHTML = list.map(x => `<tr>
-        <td><input type="checkbox" data-cmp="${esc(x.id)}" ${state.compare.has(x.id) ? 'checked' : ''} aria-label="Zaznacz do porównania"></td>
+        <td><input type="checkbox" data-cmp="${esc(x.id)}" ${state.compare.has(x.id) ? 'checked' : ''} aria-label="Porównaj: ${esc(x.app)}, ${date(x.date)}"></td>
         <td class="num">${date(x.date)}</td><td class="app">${esc(x.app)}</td><td>${esc(x.streamer || '—')}</td>
         <td class="mono small">${esc([x.codec, x.resolution && x.resolution.replace('x', '×') + (x.target_fps ? '@' + x.target_fps : ''), x.bitrate_setting_mbps ? x.bitrate_setting_mbps + ' Mb/s' : ''].filter(Boolean).join(' '))}</td>
         <td class="small">${esc(x.range || '')}</td>
         <td class="num">${x.scores && x.scores.overall != null ? `<span class="score-chip s-${SS.Score.cls(x.scores.overall)}">${num(x.scores.overall, 1)}</span>` : '—'}</td>
         <td class="num">${x.host ? num(x.host.avg_fps, 2) : '—'}</td><td class="num">${x.host ? num(x.host.p5_fps, 1) : '—'}</td>
         <td class="num">${x.host ? num(x.host.encode_p95_ms, 1) : '—'}</td><td class="num">${x.host ? num(x.host.bitrate_avg_mbps, 1) : '—'}</td>
-        <td><button class="small" type="button" data-del="${esc(x.id)}">Usuń</button></td></tr>`).join('');
+        <td><button class="small" type="button" data-del="${esc(x.id)}" aria-label="Usuń z historii: ${esc(x.app)}, ${date(x.date)}">Usuń</button></td></tr>`).join('');
     body.querySelectorAll('[data-cmp]').forEach(cb => cb.addEventListener('change', () => {
       cb.checked ? state.compare.add(cb.dataset.cmp) : state.compare.delete(cb.dataset.cmp);
       $('#compareBtn').disabled = state.compare.size < 2;
@@ -1084,9 +1094,9 @@
     const cell = (v, d) => v == null || v === '' ? '—' : d === 't' ? tfmt(v) : typeof d === 'number' && typeof v === 'number' ? num(v, d) : esc(v);
     panel.innerHTML = `<div class="panel-head"><h2>Porównanie</h2><span class="muted small">Różnica = kolumna 2 minus kolumna 1. Ocena należy do Ciebie.</span></div>
       <div class="tablewrap"><table>
-        <thead><tr><th>Metryka</th>${list.map(x => `<th class="num">${esc(x.app)}<br><span class="muted" style="text-transform:none;letter-spacing:0">${date(x.date)}</span></th>`).join('')}${two ? '<th class="num">Różnica</th>' : ''}</tr></thead>
+        <thead><tr><th>Metryka</th>${list.map(x => `<th class="num">${esc(x.app)}<br><span class="muted sub">${date(x.date)}</span></th>`).join('')}${two ? '<th class="num">Różnica</th>' : ''}</tr></thead>
         <tbody>${CMP_ROWS.map(([k, f, d]) => {
-          if (!f) return `<tr><td colspan="${list.length + (two ? 2 : 1)}" class="eyebrow" style="padding-top:14px">${k}</td></tr>`;
+          if (!f) return `<tr><td colspan="${list.length + (two ? 2 : 1)}" class="eyebrow group">${k}</td></tr>`;
           const vals = list.map(f);
           let diff = '';
           if (two) {
@@ -1100,7 +1110,7 @@
   // ---------- wiring ----------
   function showTab(which) {
     const tabs = { analyze: ['#tabAnalyze', '#viewAnalyze'], history: ['#tabHistory', '#viewHistory'], settings: ['#tabSettings', '#viewSettings'] };
-    for (const [k, [t, v]] of Object.entries(tabs)) { $(t).setAttribute('aria-selected', k === which); $(v).hidden = k !== which; }
+    for (const [k, [t, v]] of Object.entries(tabs)) { $(t).setAttribute('aria-selected', k === which); $(t).tabIndex = k === which ? 0 : -1; $(v).hidden = k !== which; }
     if (which === 'history') renderHistory();
     else if (which === 'settings') SS.Settings.render($('#viewSettings'), { onSaved: () => {}, statusHtml: () => state.agent ? agentStatusHtml() : '' });
     else { const s = current(); if (s) updateRangeViews(); }
@@ -1119,6 +1129,15 @@
   $('#tabAnalyze').addEventListener('click', () => showTab('analyze'));
   $('#tabHistory').addEventListener('click', () => showTab('history'));
   $('#tabSettings').addEventListener('click', () => showTab('settings'));
+  // Tablist keyboard: arrows/Home/End move between visible tabs and activate them.
+  $('nav.tabs').addEventListener('keydown', e => {
+    const tabs = [...document.querySelectorAll('nav.tabs [role=tab]')].filter(t => !t.hidden);
+    const i = tabs.indexOf(document.activeElement);
+    const j = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
+    if (i < 0 || j == null) return;
+    e.preventDefault();
+    const t = tabs[(j + tabs.length) % tabs.length]; t.focus(); t.click();
+  });
 
   const drop = $('#drop');
   ['dragenter', 'dragover'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add('over'); }));

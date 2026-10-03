@@ -19,7 +19,7 @@ SS.Settings = (() => {
       return;
     }
     const vp = cfg.vibepollo, st = cfg.steam, cl = cfg.client_logs, tw = cfg.streamtweak;
-    const check = (id, on, label) => `<label class="field" style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}> ${label}</label>`;
+    const check = (id, on, label) => `<label class="field check"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}> ${label}</label>`;
     const text = (id, val, label, attrs = '') => `<label class="field">${label}<input class="t wide" id="${id}" value="${esc(val || '')}" ${attrs}></label>`;
     const area = (id, val, label, hint) => `<label class="field">${label}<textarea class="t wide" id="${id}" rows="2" spellcheck="false">${esc((val || []).join('\n'))}</textarea><span class="small muted">${hint}</span></label>`;
     el.innerHTML = `

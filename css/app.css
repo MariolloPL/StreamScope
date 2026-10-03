@@ -2,8 +2,8 @@
   --bg:#F2F4F6; --surface:#FFFFFF; --surface-2:#E9EDF1; --ink:#16202A; --muted:#5A6875; --line:#D6DDE4;
   --accent:#0B7A83; --accent-ink:#FFFFFF; --accent-soft:#D8EEF0;
   --s-fps:#0B7A83; --s-sent:#7B61B3; --s-cpu:#7B61B3; --s-gpu:#2F77C0; --s-enc:#C2691F; --s-br:#2F8A55;
-  --mk-off:#C23B2B; --mk-on:#2F8A55;
-  --ok:#2F8A55; --warn:#A87408; --crit:#C23B2B;
+  --mk-off:#B0321F; --mk-on:#26763F;
+  --ok:#26763F; --warn:#8A6000; --crit:#B0321F;
   --ok-bg:#E1F2E8; --warn-bg:#FBF0D6; --crit-bg:#FBE3DF; --info-bg:#E4EBF2;
   --shade-crit:rgba(194,59,43,.14); --shade-warn:rgba(168,116,8,.16); --shade-info:rgba(90,104,117,.13);
   --dim:rgba(90,104,117,.13);
@@ -35,6 +35,14 @@ h1{font-size:30px} h2{font-size:21px} h3{font-size:17px}
 .small{font-size:13px}
 .eyebrow{font-family:var(--display);text-transform:uppercase;letter-spacing:.09em;font-size:12px;color:var(--muted);font-weight:600}
 [hidden]{display:none!important}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.stack{display:grid;gap:6px;min-width:0}
+.stack-8{display:grid;gap:8px;min-width:0}
+.stack-lg{display:grid;gap:18px;min-width:0}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.row.wide{gap:12px;flex-wrap:nowrap}
+.sub{font-weight:400;text-transform:none;letter-spacing:0}
+td.group{padding-top:12px}
 
 header.top{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px}
 header.top p{margin:4px 0 0;max-width:64ch;color:var(--muted)}
@@ -59,6 +67,7 @@ input[type=file]{display:none}
 input.t,select{font:14px var(--mono);color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:6px 8px;width:96px}
 select{font-family:var(--body);width:auto}
 label.field{display:grid;gap:3px;font-size:12.5px;color:var(--muted)}
+label.field.check{display:flex;gap:8px;align-items:center;color:var(--ink)}
 .t.wide{width:100%;max-width:640px}
 textarea.t{font:13px var(--mono);resize:vertical}
 .settings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
@@ -91,9 +100,6 @@ table.sessions td{white-space:normal;vertical-align:top;padding-block:9px}
 table.sessions td:first-child,table.sessions td.num{white-space:nowrap}
 table.sessions td.tags{min-width:160px;color:var(--muted)}
 table.sessions td .small{margin-top:2px}
-.seg button:disabled{opacity:.45}
-.seg{max-width:100%;flex-wrap:wrap}
-.seg button{flex:1 1 auto}
 @media (max-width:720px){
   table.sessions thead{display:none}
   table.sessions,table.sessions tbody{display:block}
@@ -114,8 +120,9 @@ table.sessions td .small{margin-top:2px}
 
 .range{display:flex;flex-wrap:wrap;gap:12px;align-items:end}
 .range .readout{font:500 15px var(--mono);padding-bottom:6px}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
-.seg button{border:0;border-radius:0;padding:7px 10px;font-size:13px}
+.seg{display:inline-flex;flex-wrap:wrap;max-width:100%;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.seg button{flex:1 1 auto;border:0;border-radius:0;padding:7px 10px;font-size:13px}
+.seg button:disabled{opacity:.45}
 .seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
 
 .stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));border-top:1px solid var(--line);border-left:1px solid var(--line);border-radius:8px;overflow:hidden}
@@ -129,6 +136,7 @@ table.sessions td .small{margin-top:2px}
 .scorebox{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;align-items:start}
 .score-big{display:grid;justify-items:center;gap:2px;padding:10px 16px;border-radius:10px;background:var(--surface-2);min-width:120px}
 .score-big .n{font:700 46px/1 var(--display)}
+.score-big.sm{min-width:90px;padding:6px 12px} .score-big.sm .n{font-size:34px}
 .score-big .d{font-size:12px;color:var(--muted)}
 .scores{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px}
 .score{background:var(--surface-2);border-radius:8px;padding:10px 12px;display:grid;gap:6px;align-content:start}
