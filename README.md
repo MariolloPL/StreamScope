@@ -40,7 +40,7 @@ Markery: wyłącz i włącz pad podłączony do klienta na początku i na końcu
   - sesje diagnostyczne VRR z Moonlighta (`client_logs.vrr_dirs`, udostępniony folder `vrr-diagnostics` klienta): `Moonlight.log` oraz podsumowanie sekundowe z `.vrrtrace` (wyświetlane FPS, opóźnienie odbiór→ekran, odrzucone klatki), dzięki czemu statystyki klienta są dostępne dla wybranego zakresu;
 - udostępnia StreamScope w sieci domowej pod `http://<IP-PC>:8765/`. Każde urządzenie widzi te same sesje, zakresy i historię. Pliki wrzucone ręcznie też trafiają do archiwum.
 
-Konfiguracja: skopiuj `agent/config.example.json` do `agent/config.json` (plik jest w `.gitignore`) i wpisz login i hasło do panelu Vibepollo oraz ścieżkę do logów klienta.
+Konfiguracja: zakładka **Ustawienia** w StreamScope (tylko na komputerze z agentem): login i hasło do Vibepollo (hasło nigdy nie wraca do przeglądarki), foldery klienta i diagnostyki VRR, Steam, StreamTweak; przyciski „Testuj połączenie”, „Sprawdź foldery”, „Zapisz i zrestartuj agenta”, „Utwórz skrót na pulpicie”. Ustawienia trafiają do `agent/config.json` (w `.gitignore`; wzór: `agent/config.example.json`).
 
 Uruchomienie: `agent\start-agent.cmd`, a autostart po zalogowaniu: `agent\install-autostart.cmd` (zadanie w Harmonogramie zadań, startuje od razu po zalogowaniu; folder Autostart Windows potrafi opóźnić start o kilka minut). Żeby telefon miał dostęp, Zapora Windows musi przepuszczać port 8765 w sieci prywatnej (PowerShell jako administrator):
 

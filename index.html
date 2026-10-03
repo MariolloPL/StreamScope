@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="css/app.css?v=202610031052">
+<link rel="stylesheet" href="css/app.css?v=202610031113">
 </head>
 <body>
 <div class="wrap">
@@ -26,6 +26,7 @@
   <nav class="tabs" role="tablist">
     <button role="tab" id="tabAnalyze" aria-selected="true" aria-controls="viewAnalyze">Analiza</button>
     <button role="tab" id="tabHistory" aria-selected="false" aria-controls="viewHistory">Historia i porównanie <span id="histCount" class="muted"></span></button>
+    <button role="tab" id="tabSettings" aria-selected="false" aria-controls="viewSettings" hidden>Ustawienia</button>
   </nav>
 
   <main id="viewAnalyze" role="tabpanel" aria-labelledby="tabAnalyze" style="display:grid;gap:18px">
@@ -83,6 +84,8 @@
     </section>
   </main>
 
+  <main id="viewSettings" role="tabpanel" aria-labelledby="tabSettings" hidden style="display:grid;gap:18px"></main>
+
   <main id="viewHistory" role="tabpanel" aria-labelledby="tabHistory" hidden style="display:grid;gap:18px">
     <section class="panel">
       <div class="panel-head">
@@ -105,18 +108,19 @@
   </main>
 </div>
 
-<script src="js/core.js?v=202610031052"></script>
-<script src="js/parsers/vibepollo.js?v=202610031052"></script>
-<script src="js/parsers/clientlog.js?v=202610031052"></script>
-<script src="js/parsers/streamtweak.js?v=202610031052"></script>
-<script src="js/parsers/steamlog.js?v=202610031052"></script>
-<script src="js/engine/diagnostics.js?v=202610031052"></script>
-<script src="js/engine/gameplay.js?v=202610031052"></script>
-<script src="js/engine/score.js?v=202610031052"></script>
-<script src="js/engine/session.js?v=202610031052"></script>
-<script src="js/storage.js?v=202610031052"></script>
-<script src="js/store.js?v=202610031052"></script>
-<script src="js/chart.js?v=202610031052"></script>
-<script src="js/app.js?v=202610031052"></script>
+<script src="js/core.js?v=202610031113"></script>
+<script src="js/parsers/vibepollo.js?v=202610031113"></script>
+<script src="js/parsers/clientlog.js?v=202610031113"></script>
+<script src="js/parsers/streamtweak.js?v=202610031113"></script>
+<script src="js/parsers/steamlog.js?v=202610031113"></script>
+<script src="js/engine/diagnostics.js?v=202610031113"></script>
+<script src="js/engine/gameplay.js?v=202610031113"></script>
+<script src="js/engine/score.js?v=202610031113"></script>
+<script src="js/engine/session.js?v=202610031113"></script>
+<script src="js/storage.js?v=202610031113"></script>
+<script src="js/store.js?v=202610031113"></script>
+<script src="js/chart.js?v=202610031113"></script>
+<script src="js/settings.js?v=202610031113"></script>
+<script src="js/app.js?v=202610031113"></script>
 </body>
 </html>

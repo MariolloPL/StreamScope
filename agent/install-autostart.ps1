@@ -29,6 +29,14 @@ try {
     Write-Host " [OK] Harmonogram zadan niedostepny ($($_.Exception.Message)); autostart ustawiony przez rejestr (Run)."
 }
 
+# Desktop shortcut that opens StreamScope (Internet shortcut with the StreamScope icon).
+try {
+    $desk = [Environment]::GetFolderPath('Desktop')
+    $ico = Join-Path $PSScriptRoot 'streamscope.ico'
+    "[InternetShortcut]`r`nURL=http://localhost:8765/`r`nIconFile=$ico`r`nIconIndex=0`r`n" | Set-Content -Path (Join-Path $desk 'StreamScope.url') -Encoding ASCII
+    Write-Host " [OK] Skrot StreamScope na pulpicie."
+} catch { Write-Host " [!] Nie udalo sie utworzyc skrotu na pulpicie: $($_.Exception.Message)" }
+
 # Restart: stop a running agent so the current code and config.json take effect.
 $running = @(Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" | Where-Object { $_.CommandLine -like '*streamscope_agent.py*' })
 foreach ($p in $running) {

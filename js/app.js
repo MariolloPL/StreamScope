@@ -94,6 +94,7 @@
     if (agent) {
       state.agent = agent;
       $('#clearBtn').hidden = true;   // the archive belongs to the agent; single sessions can still be hidden
+      $('#tabSettings').hidden = false;
       await SS.History.useAgent().catch(() => {});
       renderHistory();
     }
@@ -1098,10 +1099,10 @@
 
   // ---------- wiring ----------
   function showTab(which) {
-    const hist = which === 'history';
-    $('#tabAnalyze').setAttribute('aria-selected', !hist); $('#tabHistory').setAttribute('aria-selected', hist);
-    $('#viewAnalyze').hidden = hist; $('#viewHistory').hidden = !hist;
-    if (hist) renderHistory();
+    const tabs = { analyze: ['#tabAnalyze', '#viewAnalyze'], history: ['#tabHistory', '#viewHistory'], settings: ['#tabSettings', '#viewSettings'] };
+    for (const [k, [t, v]] of Object.entries(tabs)) { $(t).setAttribute('aria-selected', k === which); $(v).hidden = k !== which; }
+    if (which === 'history') renderHistory();
+    else if (which === 'settings') SS.Settings.render($('#viewSettings'), { onSaved: () => {}, statusHtml: () => state.agent ? agentStatusHtml() : '' });
     else { const s = current(); if (s) updateRangeViews(); }
   }
   document.querySelectorAll('#sessFilter [data-f]').forEach(b => b.addEventListener('click', () => {
@@ -1117,6 +1118,7 @@
   }));
   $('#tabAnalyze').addEventListener('click', () => showTab('analyze'));
   $('#tabHistory').addEventListener('click', () => showTab('history'));
+  $('#tabSettings').addEventListener('click', () => showTab('settings'));
 
   const drop = $('#drop');
   ['dragenter', 'dragover'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add('over'); }));

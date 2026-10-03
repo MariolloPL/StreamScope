@@ -537,13 +537,13 @@ def collect_vibepollo(cfg, arc, status, state):
     if imported:
         log.info("imported %d exported Vibepollo files", imported)
     if not cfg.get("username"):
-        status.set("vibepollo", False, "uzupełnij vibepollo.username i password w agent/config.json")
+        status.set("vibepollo", False, "podaj login i hasło do panelu Vibepollo w Ustawieniach")
         return
     api = Vibepollo(cfg)
     try:
         items = api.sessions(int(cfg.get("max_sessions", 300)))
     except PermissionError:
-        status.set("vibepollo", False, "złe dane logowania do panelu Vibepollo (sprawdź username/password w agent/config.json)")
+        status.set("vibepollo", False, "złe dane logowania do panelu Vibepollo (popraw login i hasło w Ustawieniach)")
         return
     except urllib.error.HTTPError as e:
         body = ""
@@ -762,6 +762,155 @@ class ShareWatcher(threading.Thread):
 STATIC_OK = re.compile(r"^/(index\.html|css/[\w.-]+\.css|js/[\w./-]+\.js)$")
 
 
+# ---------------------------------------------------------------- settings (local machine only)
+
+EDITABLE = {   # section -> keys the settings page may change (password is write-only)
+    "vibepollo": ("enabled", "url", "username", "password", "import_dirs"),
+    "steam": ("enabled", "logs_dir"),
+    "client_logs": ("enabled", "dirs", "vrr_dirs"),
+    "streamtweak": ("enabled", "path"),
+}
+
+
+def read_raw_config():
+    """config.json as written (environment variables unexpanded), on top of the defaults."""
+    raw = json.loads(json.dumps(DEFAULTS))
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, encoding="utf-8-sig") as f:
+            for k, v in json.load(f).items():
+                if isinstance(v, dict) and isinstance(raw.get(k), dict):
+                    raw[k].update(v)
+                else:
+                    raw[k] = v
+    return raw
+
+
+def config_public():
+    raw = read_raw_config()
+    vp = raw["vibepollo"]
+    vp["has_password"] = bool(vp.get("password"))
+    vp.pop("password", None)          # never leaves the agent
+    return raw
+
+
+def config_update(body):
+    raw = read_raw_config()
+    for sec, keys in EDITABLE.items():
+        src = body.get(sec)
+        if not isinstance(src, dict):
+            continue
+        for k in keys:
+            if k not in src:
+                continue
+            v = src[k]
+            if k == "password":
+                if v:                      # empty = keep the stored password
+                    raw[sec][k] = str(v)
+                continue
+            if k == "enabled":
+                raw[sec][k] = bool(v)
+            elif k in ("dirs", "vrr_dirs", "import_dirs"):
+                raw[sec][k] = [str(x).strip() for x in (v or []) if str(x).strip()]
+            else:
+                raw[sec][k] = str(v).strip()
+    if body.get("clear_password"):
+        raw["vibepollo"]["password"] = ""
+    if "check_every_minutes" in body:
+        raw["check_every_minutes"] = max(0, int(body["check_every_minutes"] or 0))
+    raw.pop("poll_seconds", None)
+    raw["vibepollo"].pop("has_password", None)
+    tmp = CONFIG_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(raw, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, CONFIG_PATH)
+
+
+def test_vibepollo(body):
+    stored = read_raw_config()["vibepollo"]
+    cfg = {"url": body.get("url") or stored.get("url"), "username": body.get("username") or stored.get("username"),
+           "password": body.get("password") or stored.get("password", "")}
+    if not cfg["username"]:
+        return {"ok": False, "msg": "brak loginu"}
+    try:
+        api = Vibepollo(cfg)
+        items = api.sessions(5)
+        return {"ok": True, "msg": f"połączono, panel ma sesje w historii ({len(items)}+)"}
+    except PermissionError:
+        return {"ok": False, "msg": "złe dane logowania"}
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "msg": f"HTTP {e.code}"}
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return {"ok": False, "msg": f"panel niedostępny ({getattr(e, 'reason', e)})"}
+
+
+def test_paths(body):
+    """What each configured folder/file actually contains, so a wrong path is obvious before saving."""
+    out = []
+    for kind, p in body.get("paths") or []:
+        x = os.path.expandvars(str(p))
+        try:
+            if kind == "streamtweak":
+                ok = os.path.isfile(x)
+                out.append({"path": p, "ok": ok, "msg": f"plik historii StreamTweak ({os.path.getsize(x) // 1024} KB)" if ok else "nie ma takiego pliku"})
+                continue
+            names = os.listdir(x)
+            if kind == "client":
+                n = sum(1 for n_ in names if CLIENT_RE.match(n_))
+                out.append({"path": p, "ok": True, "msg": f"logów StreamLight/Moonlight: {n}"})
+            elif kind == "vrr":
+                n = sum(1 for n_ in names if os.path.isfile(os.path.join(x, n_, "capture-info.json")))
+                out.append({"path": p, "ok": True, "msg": f"sesji diagnostycznych VRR: {n}"})
+            elif kind == "steam":
+                ok = "streaming_log.txt" in names
+                out.append({"path": p, "ok": ok, "msg": "jest streaming_log.txt" if ok else "brak streaming_log.txt"})
+            else:
+                n = sum(1 for n_ in names if VIBE_FILE_RE.match(n_))
+                out.append({"path": p, "ok": True, "msg": f"eksportów Vibepollo: {n}"})
+        except OSError as e:
+            out.append({"path": p, "ok": False, "msg": f"niedostępne ({e.strerror or e})"})
+    return out
+
+
+def desktop_dir():
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(260)
+        ctypes.windll.shell32.SHGetFolderPathW(None, 0x10, None, 0, buf)   # CSIDL_DESKTOPDIRECTORY (OneDrive-aware)
+        if buf.value:
+            return buf.value
+    except Exception:
+        pass
+    return os.path.join(os.path.expanduser("~"), "Desktop")
+
+
+def create_shortcut(port):
+    path = os.path.join(desktop_dir(), "StreamScope.url")
+    ico = os.path.join(AGENT_DIR, "streamscope.ico")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"[InternetShortcut]\r\nURL=http://localhost:{port}/\r\n")
+        if os.path.isfile(ico):
+            f.write(f"IconFile={ico}\r\nIconIndex=0\r\n")
+    return path
+
+
+def restart_later(srv):
+    """Start a fresh agent (it waits for this one to release the port) and exit."""
+    import subprocess
+    def go():
+        time.sleep(0.5)
+        env = dict(os.environ, STREAMSCOPE_RESTART="1")
+        args = [sys.executable, os.path.abspath(__file__)]
+        flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        try:
+            subprocess.Popen(args, cwd=AGENT_DIR, env=env, close_fds=True, creationflags=flags | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0))
+        except OSError:
+            subprocess.Popen(args, cwd=AGENT_DIR, env=env, close_fds=True, creationflags=flags)
+        log.info("restarting on request")
+        srv.server_close()
+        os._exit(0)
+    threading.Thread(target=go, daemon=True).start()
+
+
 def make_handler(arc, status, collector):
     class H(BaseHTTPRequestHandler):
         server_version = "StreamScopeAgent/" + VERSION
@@ -794,6 +943,16 @@ def make_handler(arc, status, collector):
         def do_HEAD(self):
             self.do_GET()
 
+        def _local(self):
+            # Settings, tests, shortcut and restart only from this PC, never from other devices on the LAN.
+            if self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
+                return True
+            self._send(403, {"error": "ustawienia można zmieniać tylko na komputerze z agentem"})
+            return False
+
+        def _json(self, limit=1024 * 1024):
+            return json.loads(self._body(limit).decode("utf-8") or "{}")
+
         def do_GET(self):
             u = urllib.parse.urlparse(self.path)
             q = urllib.parse.parse_qs(u.query)
@@ -812,6 +971,10 @@ def make_handler(arc, status, collector):
                     return self._send(404, {"error": "not found"})
             if u.path in ("/api/history", "/api/prefs"):
                 return self._send(200, arc.read_doc(u.path[5:] + ".json", [] if u.path == "/api/history" else {}))
+            if u.path == "/api/config":
+                if not self._local():
+                    return
+                return self._send(200, {**config_public(), "local": True, "config_path": CONFIG_PATH})
             path = "/index.html" if u.path in ("/", "") else u.path
             if STATIC_OK.match(path):
                 full = os.path.normpath(os.path.join(APP_DIR, path.lstrip("/")))
@@ -832,6 +995,14 @@ def make_handler(arc, status, collector):
                     return self._send(400, {"error": "bad json"})
                 arc.write_doc(u.path[5:] + ".json", value)
                 return self._send(200, {"ok": True})
+            if u.path == "/api/config":
+                if not self._local():
+                    return
+                try:
+                    config_update(self._json())
+                except (ValueError, TypeError) as e:
+                    return self._send(400, {"error": f"niepoprawne dane: {e}"})
+                return self._send(200, {"ok": True, "restart_needed": True})
             return self._send(404, {"error": "not found"})
 
         def do_POST(self):
@@ -854,6 +1025,25 @@ def make_handler(arc, status, collector):
                     return self._send(200, {"ok": True, "finished": finished, **status.snapshot()})
                 collector.wake.set()
                 return self._send(200, {"ok": True})
+            if u.path in ("/api/test/vibepollo", "/api/test/paths", "/api/shortcut", "/api/restart"):
+                if not self._local():
+                    return
+                try:
+                    body = self._json()
+                except ValueError:
+                    body = {}
+                if u.path == "/api/test/vibepollo":
+                    return self._send(200, test_vibepollo(body))
+                if u.path == "/api/test/paths":
+                    return self._send(200, test_paths(body))
+                if u.path == "/api/shortcut":
+                    try:
+                        return self._send(200, {"ok": True, "path": create_shortcut(self.server.server_address[1])})
+                    except OSError as e:
+                        return self._send(500, {"ok": False, "error": str(e)})
+                self._send(200, {"ok": True})
+                restart_later(self.server)
+                return
             return self._send(404, {"error": "not found"})
 
     return H
@@ -893,11 +1083,18 @@ def main():
     status = Status()
     collector = Collector(cfg, arc, status)
     # Bind first: if another agent already owns the port, exit before starting any watcher or download.
-    try:
-        srv = ExclusiveServer((cfg["bind"], int(cfg["port"])), make_handler(arc, status, collector))
-    except OSError:
-        log.info("StreamScope Agent already running on port %s; this copy exits", cfg["port"])
-        return
+    # After "restart" from the settings page the old process may hold the port for a moment: wait for it.
+    deadline = time.time() + (15 if os.environ.get("STREAMSCOPE_RESTART") else 0)
+    while True:
+        try:
+            srv = ExclusiveServer((cfg["bind"], int(cfg["port"])), make_handler(arc, status, collector))
+            break
+        except OSError:
+            if time.time() < deadline:
+                time.sleep(0.5)
+                continue
+            log.info("StreamScope Agent already running on port %s; this copy exits", cfg["port"])
+            return
     collector.start()
     if cfg["client_logs"].get("enabled", True):
         for d in cfg["client_logs"].get("dirs") or []:
