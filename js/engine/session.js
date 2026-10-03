@@ -21,7 +21,7 @@ SS.Session = (() => {
     return kept;
   }
 
-  function build(hostFiles, clientLogs, traces = []) {
+  function build(hostFiles, clientLogs, traces = [], stSessions = []) {
     const sessions = hostFiles.map(h => ({ id: 'h:' + h.key, host: h, clients: [], offset: 0, log: null }));
     const loose = [];
 
@@ -56,7 +56,26 @@ SS.Session = (() => {
       sessions.push({ id: `c:${c.log.key}#${c.stream.index}`, host: null, clients: [c], offset: 0, log: c.log });
     }
     sessions.forEach(s => finish(s, traces));
+    attachStreamTweak(sessions, stSessions);
     return sessions.sort((a, b) => b.t0 - a.t0);
+  }
+
+  // StreamTweak shares the host clock: attach each of its sessions to the StreamScope session it overlaps
+  // most (at least half of the shorter one). Unmatched ones (e.g. Vibepollo never delivered the file)
+  // become sessions of their own.
+  function attachStreamTweak(sessions, stSessions) {
+    for (const st of stSessions) {
+      let best = null, bestOv = 0;
+      for (const s of sessions) {
+        const ov = Math.min(s.t1, st.u1) - Math.max(s.t0, st.u0);
+        if (ov > bestOv && ov >= 0.5 * Math.min(s.t1 - s.t0, st.u1 - st.u0)) { best = s; bestOv = ov; }
+      }
+      if (best && !best.st) best.st = st;
+      else if (!best && st.u1 - st.u0 >= 60) {
+        sessions.push({ id: 'st:' + st.id, st, host: null, clients: [], markers: [], events: [], log: null, clientBase: null, offset: 0,
+          t0: st.u0, t1: st.u1, app: st.app });
+      }
+    }
   }
 
   function finish(s, traces = []) {
@@ -87,6 +106,11 @@ SS.Session = (() => {
   // Default range: the longest automatically detected gameplay stretch (menus and loading excluded);
   // without one, the longest uuid segment (the short one is usually a settings reconnect).
   function defaultRange(s) {
+    if (!s.host && !s.clients.length && s.st) {
+      // StreamTweak-only: the game span if it recorded one, else the whole session.
+      const g = (s.st.games || []).filter(x => x.u0 && x.u1).sort((x, y) => (y.u1 - y.u0) - (x.u1 - x.u0))[0];
+      return g ? { a: Math.max(g.u0, s.t0), b: Math.min(g.u1, s.t1) } : { a: s.t0, b: s.t1 };
+    }
     const gp = s.host && s.host.gameplay;
     if (gp && gp.length) {
       const g = [...gp].sort((x, y) => y.dur - x.dur)[0];
@@ -131,6 +155,9 @@ SS.Benchmark = (() => {
       frames += (g[g.length - 1].frames_sent - g[0].frames_sent); secs += g[g.length - 1].timestamp_unix - g[0].timestamp_unix;
     }
     const share = th => fps.filter(v => v >= th).length / fps.length * 100;
+    // Late frames without client telemetry: share of encoded samples slower than two frame periods.
+    const frameMs = 1000 / (h.target || 60);
+    const encOver2Pct = enc.length ? enc.filter(v => v > 2 * frameMs).length / enc.length * 100 : null;
     // Vibepollo drops to ~16 FPS keepalive on a static picture (loading screen, pause): not a stream hiccup.
     const KEEPALIVE = 20;
     const active = fps.filter(v => v > KEEPALIVE);
@@ -141,7 +168,7 @@ SS.Benchmark = (() => {
       fpsSent: secs > 0 ? frames / secs : null,
       pct90: share(90), pct100: share(100),
       bitrateAvg: mean(br), bitrateP95: quantile(br, 0.95),
-      encAvg: mean(enc), encP50: quantile(enc, 0.5), encP95: quantile(enc, 0.95), encMax: max(enc),
+      encAvg: mean(enc), encP50: quantile(enc, 0.5), encP95: quantile(enc, 0.95), encMax: max(enc), encOver2Pct,
       cpuAvg: mean(W.map(s => +s.host_cpu_percent || 0)), gpuAvg: mean(W.map(s => +s.host_gpu_percent || 0)),
       gpuEncAvg: mean(W.map(s => +s.host_gpu_encoder_percent || 0)), gpuTempMax: max(W.map(s => +s.host_gpu_temp_c || 0)),
       losses: counterSum(W, 'client_reported_losses'), videoDropped: counterSum(W, 'video_dropped'),
@@ -175,6 +202,29 @@ SS.Benchmark = (() => {
     };
   }
 
+  // StreamTweak telemetry (StreamLight client + host) inside the range, from its ~600-point series.
+  function streamtweak(stS, a, b) {
+    const pick = key => (stS.series[key] || []).filter(p => p.u >= a && p.u <= b).map(p => p.v);
+    const rtt = pick('rtt').filter(v => v > 0), drops = pick('drops'), hl = pick('hostLat').filter(v => v > 0);
+    const dec = pick('decode'), br = pick('bitrate');
+    const seconds = Math.min(b, stS.u1) - Math.max(a, stS.u0);
+    if (seconds < 10) return null;
+    const q = stS.stats || {};
+    const fps = q.FpsAvg || null;
+    // Drops series = dropped frames per client report (~1 per second).
+    const dropsPerSec = drops.length ? mean(drops) : null;
+    return {
+      seconds, targetFps: q.TargetFps || null, fpsAvg: fps,
+      rttAvg: rtt.length ? mean(rtt) : q.RttAvgMs ?? null, rttMax: rtt.length ? max(rtt) : q.RttMaxMs ?? null,
+      dropPct: dropsPerSec != null && fps ? dropsPerSec / fps * 100 : q.DropRatePct ?? null,
+      hostLatAvg: hl.length ? mean(hl) : (q.HostLatencyAvgMs > 0 ? q.HostLatencyAvgMs : null),
+      hostLatMaxSession: q.HostLatencyMaxMs > 0 ? q.HostLatencyMaxMs : null,
+      latePct: q.HostLatencyOverBudgetPct >= 0 ? q.HostLatencyOverBudgetPct : null,
+      decodeAvg: dec.length ? mean(dec) : q.DecodeAvgMs ?? null, bitrateAvg: br.length ? mean(br) : q.BitrateAvgMbps ?? null,
+      jitterAvg: q.JitterAvgMs ?? null, targetBitrate: q.TargetBitrateMbps || null
+    };
+  }
+
   function compute(session, a, b) {
     const clients = session.clients.filter(c => c.u1 >= a && c.u0 <= b);
     const inRange = e => e.u >= a && e.u <= b;
@@ -186,9 +236,10 @@ SS.Benchmark = (() => {
       host: session.host ? host(session.host, a, b) : null,
       clients,
       clientTrace: withTrace ? trace(withTrace, a, b) : null,
+      st: session.st ? streamtweak(session.st, a, b) : null,
       clientEvents: { rfi: countOf('rfi'), idr: countOf('idr'), overflow: countOf('overflow') }
     };
   }
 
-  return { compute };
+  return { compute, streamtweak };
 })();

@@ -15,7 +15,7 @@
 
   const state = {
     hosts: new Map(), logs: new Map(), diag: new Map(), steam: new Map(), steamSel: new Map(), hidden: new Set(),
-    agent: null, fileIndex: new Map(), traces: new Map(),
+    agent: null, fileIndex: new Map(), traces: new Map(), streamtweak: null, compareWith: null,
     sessions: [], selected: null, ranges: new Map(), timeBase: 'client', compare: new Set(),
     filter: (() => { try { return localStorage.getItem('streamscope.filter') || 'all'; } catch (e) { return 'all'; } })()
   };
@@ -25,6 +25,11 @@
   function ingest(n, text, msgs) {
     // Only .json files (or extension-less text that starts with "{") go to the JSON path; plain-text logs
     // often start with "[timestamp]" and must not be reported as broken JSON.
+    if (/^\s*\[/.test(text.slice(0, 20)) && /"RttTimeSeries"|"QualityStats"/.test(text.slice(0, 200000))) {
+      // StreamTweak history: replaces any earlier copy (it is one growing file).
+      state.streamtweak = SS.parseStreamTweak(n, text);
+      return { key: 'w:streamtweak', kind: 'streamtweak' };
+    }
     if (/\.json$/i.test(n) || (!/\.(log|txt|csv)$/i.test(n) && /^\s*\{/.test(text.slice(0, 50)))) {
       if (/^CapFrameX/i.test(n) || /"Runs"\s*:/.test(text.slice(0, 4000))) throw new Error('CapFrameX jeszcze nieobsługiwany');
       if (/"schema"\s*:\s*"streamscope-client-trace"/.test(text.slice(-4000)) || /"schema":"streamscope-client-trace"/.test(text)) {
@@ -122,6 +127,7 @@
     else if (key[0] === 'c') state.logs.delete(k);
     else if (key[0] === 's') state.steam.delete(k);
     else if (key[0] === 't') state.traces.delete(k);
+    else if (key[0] === 'w') state.streamtweak = null;
   }
   let polling = false;
   async function pollAgent() {
@@ -153,7 +159,7 @@
     el.textContent = n ? `Zapamiętane w tej przeglądarce: ${n} ${word}${u && u.usage ? ` (${num(u.usage / 1048576, 1)} MB)` : ''}. Wczytają się same przy następnym otwarciu.` : '';
   }
 
-  const SOURCE_LABEL = { vibepollo: 'Vibepollo', steam: 'Steam', client: 'Logi K12', watch: 'Obserwacja K12' };
+  const SOURCE_LABEL = { vibepollo: 'Vibepollo', steam: 'Steam', client: 'Logi K12', watch: 'Obserwacja K12', vrr: 'Diagnostyka VRR', vrr_watch: 'Obserwacja VRR', streamtweak: 'StreamTweak' };
   function agentStatusHtml() {
     const a = state.agent, src = a.sources || {};
     const items = Object.keys(SOURCE_LABEL).filter(k => src[k]).map(k => {
@@ -185,7 +191,8 @@
         steamById.set(id, { id, steam: c, sdiag: SS.steamDiag(c), file: f, host: null, clients: [], markers: [], events: [], log: null, clientBase: null, offset: 0, t0: c.u0, t1: c.u1, app: c.game });
       }
     }
-    state.sessions = SS.Session.build([...state.hosts.values()], [...state.logs.values()], [...state.traces.values()])
+    state.sessions = SS.Session.build([...state.hosts.values()], [...state.logs.values()], [...state.traces.values()],
+      state.streamtweak ? state.streamtweak.sessions : [])
       .concat([...steamById.values()])
       .filter(s => !state.hidden.has(s.id))
       .sort((a, b) => b.t0 - a.t0);
@@ -195,6 +202,7 @@
     }
     renderSessions();
     renderDetail();
+    renderSideBySide();
   }
 
   const current = () => state.sessions.find(s => s.id === state.selected);
@@ -206,6 +214,10 @@
       const c = s.steam, g = c.segments[c.segments.length - 1], mc = c.maxCapture;
       return `${shortEnc(g.encoder)} ${mc ? `${mc.w}×${mc.h}@${Math.round(g.fpsLimit || mc.fps)}` : ''} ${g.bandwidthLimitKbps ? num(g.bandwidthLimitKbps / 1000, 0) + ' Mb/s' : ''}`.trim();
     }
+    if (!s.host && !s.clients.length && s.st) {
+      const q = s.st.stats, enc = (s.st.streams[0] || {}).encoder || '';
+      return `${enc} ${q.TargetFps ? '@' + q.TargetFps : ''} ${q.TargetBitrateMbps ? num(q.TargetBitrateMbps, 0) + ' Mb/s' : ''}`.trim() || '—';
+    }
     const h = s.host, st = s.clients[0] && s.clients[0].stream;
     const w = h ? h.width : st && st.width, hh = h ? h.height : st && st.height;
     const fps = h ? h.target : st && st.fps, codec = (h && h.codec) || (st && st.codec) || '';
@@ -213,6 +225,7 @@
   }
   function clientCell(s) {
     if (s.steam) return `Steam → ${esc(s.steam.client)}`;
+    if (!s.clients.length && s.st) return 'StreamLight <span class="muted small">(StreamTweak)</span>';
     if (!s.clients.length) return '<span class="muted">—</span>';
     const names = [...new Set(s.clients.map(c => c.log.client))].join(', ');
     const n = s.clients.length > 1 ? ` ×${s.clients.length}` : '';
@@ -257,6 +270,10 @@
         const tags = sd.findings.filter(x => x.sev !== 'info').map(x => x.title).join(' · ') || 'brak';
         return row(s, `<span class="pill ${sd.status}">Steam · ${statusLabel[sd.status]}</span>`, `${num(sum.fps, 0)}`, tags);
       }
+      if (!s.host && !s.clients.length && s.st) {
+        const sc = sessionScore(s);
+        return row(s, '<span class="pill raw">StreamTweak</span>', `${num(s.st.stats.FpsAvg, 0)} <span class="muted small">klient</span>`, sc ? sc.reason : '');
+      }
       const d = diagOf(s);
       const tags = d ? d.findings.filter(f => f.sev !== 'info').map(f => f.title).join(' · ') || 'brak' : '';
       const fps = d ? `${num(d.stats.baseline, 0)} <span class="muted small">/ ${s.host.target}</span>` : (s.clients[0].stream.stats ? `${num(s.clients[0].stream.stats.incoming, 0)} <span class="muted small">klient</span>` : '—');
@@ -292,6 +309,7 @@
     SS.Store.putRange({ id: s.id, a: r.a, b: r.b, trimMin: r.trimMin || 0 }).catch(() => {});
     updateRangeViews();
     renderSessions();   // the table's score follows the chosen range
+    if (state.compareWith) renderSideBySide();
   }
 
   // Bring back sessions hidden with "Usuń sesję z pamięci" (agent mode / Steam keep files and only hide).
@@ -360,7 +378,7 @@
             <div class="chips">${chips.map(x => `<span class="chip">${esc(x)}</span>`).join('')}${last.pyrowave ? '<span class="chip good">PyroWave</span>' : ''}</div>
             ${bitrates ? `<div class="muted small">Docelowy bitrate ustawiany przez Steam: ${esc(bitrates)}</div>` : ''}
           </div>
-          <button class="small" type="button" id="removeBtn">Usuń sesję z pamięci</button>
+          <div class="actions"><button class="small" type="button" data-compare>Porównaj z…</button><button class="small" type="button" id="removeBtn">Usuń sesję z pamięci</button></div>
         </div>
         <p class="caveat">Steam zapisuje tylko podsumowania odcinków (nowy odcinek przy każdej zmianie przechwytywania, np. pulpit ↔ gra), bez próbek co kilka sekund. Dlatego zamiast wykresu i zakresu czasu wybierasz odcinki, a średnie są ważone ich długością.</p>
       </section>
@@ -426,6 +444,7 @@
       renderSteamDetail(el, s); renderSessions();
     }));
     $('#removeBtn').addEventListener('click', () => removeSession(s));
+    wireCompare(el, s);
     const summary = () => {
       const segs = steamSegs(s), sum = SS.steamSummary(segs);
       return { ...SS.Report.steamSummary(s, segs, sum, s.sdiag), scores: SS.Score.compact(SS.Score.steam(segs, sum)) };
@@ -440,6 +459,125 @@
       const x = summary();
       download(`streamscope-steam-${x.app.replace(/\W+/g, '_')}-${new Date(x.date * 1000).toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`, JSON.stringify(x, null, 2));
     });
+  }
+
+  // ---------- compare two sessions side by side ----------
+  const sessLabel = s => `${shortDate(s.t0)} · ${s.app} · ${s.steam ? 'Steam ' + shortEnc((s.steam.segments.at(-1) || {}).encoder) : s.clients[0] ? `${s.clients[0].log.client} ${(s.host && s.host.codec) || ''}` : s.st ? 'StreamLight (StreamTweak)' : (s.host && s.host.codec) || ''}`;
+
+  function wireCompare(el, s) {
+    const b = el.querySelector('[data-compare]');
+    if (!b) return;
+    b.addEventListener('click', () => {
+      if (b.nextElementSibling && b.nextElementSibling.tagName === 'SELECT') { b.nextElementSibling.remove(); return; }
+      const sel = document.createElement('select');
+      sel.innerHTML = `<option value="">Wybierz sesję do porównania…</option>` +
+        state.sessions.filter(o => o.id !== s.id).map(o => `<option value="${esc(o.id)}">${esc(sessLabel(o))}</option>`).join('');
+      sel.addEventListener('change', () => { if (sel.value) { state.compareWith = { a: s.id, b: sel.value }; renderSideBySide(); $('#cmpView').scrollIntoView({ behavior: 'smooth', block: 'start' }); } });
+      b.after(sel); sel.focus();
+    });
+  }
+
+  // Everything the comparison needs about one session, for its current range (or chosen Steam segments).
+  function sessionView(s) {
+    if (s.steam) {
+      const segs = steamSegs(s), sum = SS.steamSummary(segs), sc = SS.Score.steam(segs, sum);
+      return { s, sc, dur: sum.dur, range: `${segs.length} odc. Steama`, series: {}, m: {
+        fps: sum.fps, encode: sum.encodeMs, bitrate: sum.serverMbps, rtt: sum.pingMs, clientLat: (sum.networkMs || 0) + (sum.decodeMs || 0) + (sum.displayMs || 0) } };
+    }
+    const e = effRange(s), b = SS.Benchmark.compute(s, e.a, e.b), sc = SS.Score.vibepollo(s, b), H = b.host, T = b.clientTrace, ST = b.st;
+    const c = b.clients[0] && b.clients[0].stream.stats;
+    const rel = pts => pts.filter(p => p.u >= e.a && p.u <= e.b && p.v != null).map(p => ({ u: p.u - e.a, v: p.v }));
+    const series = {};
+    if (s.host) {
+      const W = s.host.samples.filter(x => x.timestamp_unix >= e.a && x.timestamp_unix <= e.b);
+      series.fps = W.map(x => ({ u: x.timestamp_unix - e.a, v: x.actual_fps }));
+      series.bitrate = W.map(x => ({ u: x.timestamp_unix - e.a, v: (x.actual_bitrate_kbps || 0) / 1000 }));
+      series.encode = W.filter(x => x.encode_latency_ms > 0).map(x => ({ u: x.timestamp_unix - e.a, v: x.encode_latency_ms }));
+    }
+    const tc = b.clients.find(x => x.trace);
+    if (tc) {
+      series.shown = rel(tc.trace.t.map((t, i) => ({ u: tc.traceU0 + t, v: tc.trace.pres[i] })));
+      series.clientLat = rel(tc.trace.t.map((t, i) => ({ u: tc.traceU0 + t, v: tc.trace.lat50[i] })));
+    }
+    if (s.st) {
+      series.hostLat = rel(s.st.series.hostLat || []);
+      if (!series.bitrate) series.bitrate = rel(s.st.series.bitrate || []);
+    }
+    return { s, sc, dur: e.b - e.a, range: `${fmtU(s, e.a)}–${fmtU(s, e.b)}`, series, m: {
+      fps: H ? (H.fpsAvgActive ?? H.fpsAvg) : ST && ST.fpsAvg, fpsP1: H ? (H.fpsP1Active ?? H.fpsP1) : null,
+      encode: H && H.encAvg, hostLat: ST && ST.hostLatAvg, bitrate: H ? H.bitrateAvg : ST && ST.bitrateAvg,
+      shown: T ? T.fpsShown : c && c.rendering, clientLat: T ? T.lat50 : null, clientLat95: T ? T.lat95 : null,
+      drops: T && T.lostPct != null ? T.lostPct + T.dropped / Math.max(1, T.fpsRecv * T.seconds) * 100 : ST ? ST.dropPct : c ? (c.netLossPct || 0) + (c.jitterLossPct || 0) : null,
+      rtt: ST ? ST.rttAvg : c && c.netLatency, late: ST ? ST.latePct : H && H.encOver2Pct, pacing: c && c.smoothness,
+      gpuEnc: H && H.gpuEncAvg, cpu: H && H.cpuAvg } };
+  }
+
+  const CMP_METRICS = [
+    ['FPS hosta (bez ekranów ładowania)', 'fps', 1, ''], ['FPS hosta P1', 'fpsP1', 1, ''], ['Wyświetlane FPS u klienta', 'shown', 1, ''],
+    ['Enkodowanie (Vibepollo)', 'encode', 2, 'ms'], ['Opóźnienie hosta (StreamTweak)', 'hostLat', 2, 'ms'],
+    ['Odbiór → ekran u klienta P50', 'clientLat', 1, 'ms'], ['Odbiór → ekran u klienta P95', 'clientLat95', 1, 'ms'],
+    ['Straty / dropy klatek', 'drops', 2, '%'], ['RTT / ping', 'rtt', 1, 'ms'], ['Spóźnione klatki', 'late', 2, '%'],
+    ['Płynność u klienta', 'pacing', 2, '%'], ['Bitrate', 'bitrate', 0, 'Mb/s'], ['Enkoder GPU', 'gpuEnc', 0, '%'], ['CPU hosta', 'cpu', 0, '%']
+  ];
+
+  function renderSideBySide() {
+    const box = $('#cmpView');
+    const cw = state.compareWith;
+    const A = cw && state.sessions.find(x => x.id === cw.a), B = cw && state.sessions.find(x => x.id === cw.b);
+    if (!A || !B) { box.hidden = true; box.innerHTML = ''; return; }
+    const va = sessionView(A), vb = sessionView(B);
+    const head = v => `<div style="display:grid;gap:6px;min-width:0">
+        <div class="eyebrow">${v === va ? 'Sesja A' : 'Sesja B'}</div>
+        <h3>${esc(v.s.app)} <span class="muted" style="font-weight:400">· ${esc(sessLabel(v.s).split(' · ').slice(2).join(' · '))}</span></h3>
+        <div class="chips"><span class="chip">${shortDate(v.s.t0)}</span><span class="chip">${esc(modeOf(v.s))}</span><span class="chip">zakres ${esc(v.range)} (${tfmt(v.dur)})</span></div>
+        ${v.sc && v.sc.overall != null ? `<div style="display:flex;gap:12px;align-items:center"><span class="score-big" style="min-width:90px;padding:6px 12px"><span class="n s-${SS.Score.cls(v.sc.overall)}" style="font-size:34px">${num(v.sc.overall, 1)}</span><span class="d">${esc(v.sc.label)}</span></span><span class="small muted">${esc(v.sc.reason)}</span></div>` : '<span class="muted small">brak oceny</span>'}
+      </div>`;
+    const diff = (a, b, d) => a == null || b == null ? '' : `${b - a > 0 ? '+' : ''}${num(b - a, d)}`;
+    const cell = (v, d) => v == null ? '—' : num(v, d);
+    const rows = [
+      `<tr><td colspan="4" class="eyebrow" style="padding-top:10px">Testy oceny (1–10)</td></tr>`,
+      ...SS.Score.GRADED.map(k => {
+        const pa = va.sc && va.sc.parts[k], pb = vb.sc && vb.sc.parts[k];
+        const a = pa ? pa.score : null, b = pb ? pb.score : null;
+        // The source sits in brackets in each reason text; different sources are not like-for-like.
+        const src = p => p && (p.why.match(/\(([^()]*(?:\([^()]*\)[^()]*)*)\)/) || [])[1];
+        // Compare only the data source: drop frame-rate details ("…; ") and the scope prefix.
+        const norm = t => t.split('; ').pop().replace(/^(zakres|cały stream|cała sesja), /, '').replace(/[\d,]+/g, '#');
+        const mixed = pa && pb && src(pa) && src(pb) && norm(src(pa)) !== norm(src(pb));
+        return a == null && b == null ? '' : `<tr><td>${SS.Score.LABELS[k]}${mixed ? ` <span class="pill warn" title="A: ${esc(src(pa))} | B: ${esc(src(pb))}">różne źródła</span>` : ''}</td><td class="num s-${SS.Score.cls(a)}">${cell(a, 1)}</td><td class="num s-${SS.Score.cls(b)}">${cell(b, 1)}</td><td class="num">${diff(a, b, 1)}</td></tr>`;
+      }),
+      `<tr><td colspan="4" class="eyebrow" style="padding-top:10px">Pomiary w zakresie</td></tr>`,
+      ...CMP_METRICS.map(([label, k, d, unit]) => {
+        const a = va.m[k], b = vb.m[k];
+        return a == null && b == null ? '' : `<tr><td>${label}${unit ? ` <span class="muted small">(${unit})</span>` : ''}</td><td class="num">${cell(a, d)}</td><td class="num">${cell(b, d)}</td><td class="num">${diff(a, b, d)}</td></tr>`;
+      })
+    ].join('');
+    box.hidden = false;
+    box.innerHTML = `<div class="panel-head"><h2>Porównanie sesji</h2><div class="actions"><button class="small" type="button" id="cmpSwap">Zamień A ↔ B</button><button class="small" type="button" id="cmpClose">Zamknij</button></div></div>
+      <div class="two">${head(va)}${head(vb)}</div>
+      <div class="tablewrap"><table><thead><tr><th>Metryka</th><th class="num">A</th><th class="num">B</th><th class="num">Różnica B − A</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="legend"><span><i style="background:var(--s-fps)"></i>A: ${esc(va.s.app)} ${shortDate(va.s.t0)}</span><span><i style="background:var(--s-enc)"></i>B: ${esc(vb.s.app)} ${shortDate(vb.s.t0)}</span><span class="muted">oś czasu: od początku zakresu każdej sesji</span></div>
+      <div class="chart" id="cmpChart"></div>
+      <p class="caveat">Obie sesje liczone w swoich aktualnych zakresach (domyślnie wykryta rozgrywka). Różnica to tylko liczby; StreamScope nie wskazuje zwycięzcy. Porównuj podobne fragmenty gry (ta sama mapa, podobna długość).</p>`;
+    $('#cmpClose').onclick = () => { state.compareWith = null; renderSideBySide(); };
+    $('#cmpSwap').onclick = () => { state.compareWith = { a: cw.b, b: cw.a }; renderSideBySide(); };
+    const panel = (label, key, h, extra = {}) => {
+      const sa = va.series[key], sb = vb.series[key];
+      if (!(sa && sa.length) && !(sb && sb.length)) return null;
+      return { label, h, series: [{ points: sa || [], c: 'var(--s-fps)', w: 1.4 }, { points: sb || [], c: 'var(--s-enc)', w: 1.4 }], ...extra };
+    };
+    const panels = [
+      panel('FPS hosta', 'fps', 130, { minMax: 60 }), panel('Wyświetlane FPS u klienta', 'shown', 110, { minMax: 60 }),
+      panel('ms odbiór → ekran u klienta (P50)', 'clientLat', 90, { minMax: 20 }), panel('ms opóźnienie hosta (StreamTweak)', 'hostLat', 80, { minMax: 10 }),
+      panel('ms enkodowanie (Vibepollo)', 'encode', 80, { minMax: 10 }), panel('Mb/s', 'bitrate', 80)
+    ].filter(Boolean);
+    const T = Math.max(va.dur, vb.dur, 60);
+    if (panels.length) SS.Chart.draw($('#cmpChart'), { host: null, t0: 0, t1: T, panels, markers: [], events: [], fmtAxis: u => tfmt(u), axisBase: 0, tipRows: () => '',
+      tipExtra: u => {
+        const at = (v, k) => { const a = v.series[k] || []; let best = null; for (const p of a) if (!best || Math.abs(p.u - u) < Math.abs(best.u - u)) best = p; return best && Math.abs(best.u - u) < 5 ? num(best.v, 1) : '—'; };
+        return `<br>FPS A ${at(va, 'fps')} · B ${at(vb, 'fps')}` + (va.series.clientLat || vb.series.clientLat ? `<br>Klient ms A ${at(va, 'clientLat')} · B ${at(vb, 'clientLat')}` : '');
+      } });
+    else $('#cmpChart').innerHTML = '<p class="muted small">Brak przebiegów w czasie do nałożenia (np. Steam ma tylko średnie odcinków).</p>';
   }
 
   // ---------- detail ----------
@@ -466,7 +604,7 @@
             <h2 id="dTitle">${esc(s.app)}${h ? ` <span class="muted" style="font-weight:500">· ${esc(h.client)}</span>` : ''}</h2>
             <div class="chips">${chips.map(c => `<span class="chip">${esc(c)}</span>`).join('')}${syncChip}</div>
           </div>
-          <button class="small" type="button" id="removeBtn">Usuń sesję z pamięci</button>
+          <div class="actions"><button class="small" type="button" data-compare>Porównaj z…</button><button class="small" type="button" id="removeBtn">Usuń sesję z pamięci</button></div>
         </div>
         ${h && h.segs.length > 1 ? segTable(s) : ''}
       </section>
@@ -483,7 +621,7 @@
       </section>
       <section class="panel" aria-labelledby="cTitle">
         <div class="panel-head"><h2 id="cTitle">Przebieg</h2><span class="muted small">Przeciągnij po wykresie, żeby wybrać zakres.</span></div>
-        ${h ? `<div class="legend">
+        ${h || s.st ? `<div class="legend">
           <span><i style="background:var(--s-fps)"></i>FPS (actual_fps)</span><span><i style="background:var(--s-br)"></i>Bitrate</span><span><i style="background:var(--s-enc)"></i>Enkodowanie / enkoder GPU</span><span><i style="background:var(--s-cpu)"></i>CPU hosta</span><span><i style="background:var(--s-gpu)"></i>GPU hosta</span>
           <span><i style="background:var(--mk-off)"></i>pad OFF</span><span><i style="background:var(--mk-on)"></i>pad ON</span><span><i style="background:var(--warn)"></i>RFI (klient)</span><span><i style="background:var(--crit)"></i>IDR / przepełnienie</span>
           <span><i class="box" style="background:var(--shade-crit)"></i>brak klatek</span><span><i class="box" style="background:var(--shade-warn)"></i>przeciążenie GPU</span><span><i class="box" style="background:var(--dim)"></i>poza zakresem</span><span><i style="background:var(--ok);height:5px"></i>wykryta rozgrywka</span>
@@ -517,6 +655,7 @@
       setRange(s, b.dataset.as === 'start' ? { a: m.u } : { b: m.u, trimMin: 0 });
     }));
     $('#removeBtn').addEventListener('click', () => removeSession(s));
+    wireCompare(el, s);
     $('#saveBtn').addEventListener('click', () => {
       const ok = SS.History.add(buildSummary(s));
       actMsg(ok ? 'Zapisano w historii tej przeglądarki.' : 'Zapisano tylko do zamknięcia karty: przeglądarka blokuje pamięć lokalną.');
@@ -599,8 +738,40 @@
     $('#dClient').innerHTML = clientHtml(s, bench);
   }
 
+  // StreamTweak series as chart panels (host clock, ~600 points per session).
+  function stPanels(s, target) {
+    if (!s.st) return [];
+    const P = k => s.st.series[k] || [];
+    const frame = 1000 / (target || 60);
+    const panels = [
+      { label: 'ms opóźnienie hosta (StreamTweak: przechwyt. + enk.)', h: 80, minMax: frame * 1.2, series: [{ points: P('hostLat'), c: 'var(--s-enc)', w: 1.3 }], refLines: [{ v: frame, c: 'var(--muted)' }] },
+      { label: 'ms RTT (StreamTweak)', h: 70, minMax: 5, series: [{ points: P('rtt'), c: 'var(--s-gpu)', w: 1.2 }] },
+      { label: 'dropy / s (StreamTweak)', h: 60, minMax: 2, series: [{ points: P('drops'), c: 'var(--crit)', w: 1.2 }] }
+    ];
+    if (!s.host) panels.push(
+      { label: 'Mb/s (StreamTweak)', h: 80, series: [{ points: P('bitrate'), c: 'var(--s-br)' }] },
+      { label: '% obciążenia hosta (StreamTweak)', h: 90, max: 100, series: [{ points: P('cpu'), c: 'var(--s-cpu)', w: 1.1 }, { points: P('gpu'), c: 'var(--s-gpu)', w: 1.1 }, { points: P('enc'), c: 'var(--s-enc)', w: 1.1 }] });
+    return panels;
+  }
+  const stAt = (s, u) => {
+    if (!s.st) return '';
+    const near = k => { const a = s.st.series[k] || []; let best = null; for (const p of a) if (!best || Math.abs(p.u - u) < Math.abs(best.u - u)) best = p; return best && Math.abs(best.u - u) < 10 ? best.v : null; };
+    const hl = near('hostLat'), rtt = near('rtt'), dr = near('drops');
+    return hl == null && rtt == null ? '' : `<br>StreamTweak: host ${num(hl, 1)} ms · RTT ${num(rtt, 1)} ms${dr ? ` · dropy ${num(dr, 1)}/s` : ''}`;
+  };
+
   function drawChart(s, e) {
-    const el = $('#dChart'); if (!el || !s.host) return;
+    const el = $('#dChart'); if (!el) return;
+    if (!s.host) {
+      if (!s.st) return;
+      SS.Chart.draw(el, {
+        host: null, t0: s.t0, t1: s.t1, range: e, markers: [], events: [],
+        bands: (s.st.games || []).map(g => ({ a: g.u0, b: g.u1, fill: 'var(--ok)' })),
+        fmtAxis: u => fmtU(s, u), axisBase: base0(s), tipRows: () => '', tipExtra: u => stAt(s, u),
+        panels: stPanels(s, s.st.stats.TargetFps), onRange: (a, b) => setRange(s, { a, b, trimMin: 0 })
+      });
+      return;
+    }
     const h = s.host, d = diagOf(s);
     const epi = [];
     if (d) {
@@ -626,10 +797,11 @@
     SS.Chart.draw(el, {
       host: h, t0: s.t0, t1: s.t1, range: e, markers: s.markers, events: s.events, episodes: epi, segs: h.segs,
       bands: (h.gameplay || []).map(g => ({ a: g.a, b: g.b, fill: 'var(--ok)' })),
-      fmtAxis: u => fmtU(s, u), axisBase: base0(s), tipExtra: traceAt,
+      fmtAxis: u => fmtU(s, u), axisBase: base0(s), tipExtra: u => traceAt(u) + stAt(s, u),
       panels: [
         { label: 'FPS', h: 150, minMax: h.target || 60, series: [{ get: x => x.actual_fps, c: 'var(--s-fps)', w: 1.6 }], refLines: [{ v: h.target, c: 'var(--muted)' }] },
         ...clientPanels,
+        ...stPanels(s, h.target),
         { label: 'Mb/s', h: 90, series: [{ get: x => (x.actual_bitrate_kbps || 0) / 1000, c: 'var(--s-br)' }], refLines: [{ v: h.reqBitrate ? h.reqBitrate / 1000 : null, c: 'var(--muted)' }] },
         { label: 'ms enk.', h: 80, minMax: 12, series: [{ get: x => x.encode_latency_ms, c: 'var(--s-enc)', skipZero: true }] },
         { label: '% obciążenia', h: 100, max: 100, series: [{ get: x => x.host_cpu_percent, c: 'var(--s-cpu)', w: 1.1 }, { get: x => x.host_gpu_percent, c: 'var(--s-gpu)', w: 1.1 }, { get: x => x.host_gpu_encoder_percent, c: 'var(--s-enc)', w: 1.1 }] }
@@ -643,30 +815,52 @@
   // Score of the session's current range (Vibepollo) or chosen segments (Steam), as shown in its detail.
   function sessionScore(s) {
     if (s.steam) { const segs = steamSegs(s); return SS.Score.steam(segs, SS.steamSummary(segs)); }
-    if (!s.host) return null;
+    if (!s.host && !s.st) return null;
     const e = effRange(s);
     return SS.Score.vibepollo(s, SS.Benchmark.compute(s, e.a, e.b));
   }
   const scoreChip = sc => sc && sc.overall != null ? `<span class="score-chip s-${SS.Score.cls(sc.overall)}">${num(sc.overall, 1)}</span>` : '<span class="muted">—</span>';
+  const scoreTile = (k, p) => {
+    const c = SS.Score.cls(p.score), w = p.score == null ? 0 : p.score * 10;
+    return `<div class="score"><div class="top"><b>${SS.Score.LABELS[k]}</b><span class="val s-${c}">${p.score == null ? 'n/d' : num(p.score, 1)}</span></div>
+      <div class="meter"><i class="m-${c}" style="width:${w}%"></i></div><p>${esc(p.why)}</p></div>`;
+  };
   function scoreHtml(sc) {
     if (!sc || sc.overall == null) return '';
-    const tile = (k, p) => {
-      const c = SS.Score.cls(p.score), w = p.score == null ? 0 : p.score * 10;
-      return `<div class="score"><div class="top"><b>${SS.Score.LABELS[k]}${k === 'headroom' ? ' <span class="muted small">(info)</span>' : ''}</b><span class="val s-${c}">${p.score == null ? 'n/d' : num(p.score, 1)}</span></div>
-        <div class="meter"><i class="m-${c}" style="width:${w}%"></i></div><p>${esc(p.why)}</p></div>`;
-    };
-    const order = ['fps', 'stability', 'latency', 'network', 'image', 'headroom'].filter(k => sc.parts[k]);
+    const graded = SS.Score.GRADED.filter(k => sc.parts[k]), info = SS.Score.INFO.filter(k => sc.parts[k]);
     return `<div class="scorebox">
-      <div class="score-big"><span class="n s-${SS.Score.cls(sc.overall)}">${num(sc.overall, 1)}</span><span class="d">ocena ogólna / 10</span></div>
-      <div class="scores">${order.map(k => tile(k, sc.parts[k])).join('')}</div>
+      <div class="score-big"><span class="n s-${SS.Score.cls(sc.overall)}">${num(sc.overall, 1)}</span><span class="d">${esc(sc.label)}</span></div>
+      <div style="display:grid;gap:8px;min-width:0">
+        <div><b>Werdykt: ${esc(sc.label)}</b> <span class="muted small">· ${esc(sc.reason)}</span></div>
+        <div class="scores">${graded.map(k => scoreTile(k, sc.parts[k])).join('')}</div>
+      </div>
     </div>
-    <p class="caveat">Ocena ogólna: FPS 25%, stabilność 20%, opóźnienie 25%, sieć 20%, obraz 10% (bez ocen „n/d”). Zapas hosta jest tylko informacyjny. Liczona dla wybranego zakresu, więc menu i ekrany ładowania ją obniżają. Oceny Steama opierają się na innych pomiarach niż Vibepollo/StreamLight (np. odchylenie FPS zamiast percentyli), więc porównuj je ostrożnie.</p>`;
+    ${info.length ? `<details><summary class="small" style="font-size:14px">Informacyjnie, bez wpływu na ocenę: ${info.map(k => `${SS.Score.LABELS[k]} ${sc.parts[k].score == null ? 'n/d' : num(sc.parts[k].score, 1)}`).join(' · ')}</summary>
+      <div class="scores" style="margin-top:8px">${info.map(k => scoreTile(k, sc.parts[k])).join('')}</div></details>` : ''}
+    <p class="caveat">Ocena = średnia testów, ale najwyżej 1,5 pkt powyżej najsłabszego. Opóźnienia liczone w okresach klatki, FPS poza oceną (jak w StreamTweak); każdy test podaje źródło danych. Liczona dla wybranego zakresu.</p>`;
   }
 
   const stat = (k, v, unit, hl) => `<div class="stat${hl ? ' hl' : ''}"><span class="k">${k}</span><span class="v">${v}${unit ? ` <small>${unit}</small>` : ''}</span></div>`;
 
+  // StreamTweak numbers in the range (StreamLight telemetry about once per second + host load).
+  function stHtml(b) {
+    const T = b.st;
+    if (!T) return '';
+    return `<div style="display:grid;gap:8px"><h3>StreamTweak w zakresie <span class="muted small" style="font-weight:400">telemetria StreamLight, ok. 1 próbka na sekundę</span></h3>
+      <div class="stats">
+        ${stat('RTT śr. / maks.', `${num(T.rttAvg, 1)} / ${num(T.rttMax, 0)}`, 'ms', true)}
+        ${stat('Jitter śr.', num(T.jitterAvg, 1), 'ms (cała sesja)')}
+        ${stat('Dropy', num(T.dropPct, 2), '% klatek')}
+        ${stat('Opóźnienie hosta', num(T.hostLatAvg, 2), `ms, przechwytywanie + enkodowanie${T.hostLatMaxSession ? `; maks. ${num(T.hostLatMaxSession, 0)} ms (sesja)` : ''}`, true)}
+        ${stat('Spóźnione klatki', num(T.latePct, 2), '% ponad 2 okresy (sesja)')}
+        ${stat('Dekodowanie', num(T.decodeAvg, 2), 'ms')}
+        ${stat('Bitrate dostarczony', num(T.bitrateAvg, 0), T.targetBitrate ? `Mb/s z ${num(T.targetBitrate, 0)} docelowych` : 'Mb/s')}
+      </div></div>`;
+  }
+
   function benchHtml(s, b) {
     const H = b.host;
+    if (!s.host && s.st) return scoreHtml(SS.Score.vibepollo(s, b)) + stHtml(b) + `<p class="caveat">Brak pliku sesji Vibepollo z tego czasu (np. panel go nie oddał), więc ocena opiera się na danych StreamTweak.</p>`;
     if (!s.host) return `<p class="muted">Benchmark FPS, bitrate i enkodowania liczy się z próbek hosta. Dodaj plik <span class="mono">sunshine-session-*.json</span> z tej sesji.</p>`;
     if (!H) return `<p class="muted">W wybranym zakresie jest mniej niż 2 próbki hosta. Poszerz zakres.</p>`;
     const ev = b.clientEvents;
@@ -690,12 +884,12 @@
       ${stat('IDR / ref. invalid.', `${H.idr} / ${H.refInv}`)}
       ${stat('RFI / IDR u klienta', s.clients.length ? `${ev.rfi} / ${ev.idr}` : '—', ev.overflow ? `+${ev.overflow} przepełn.` : '')}
       ${stat('Próbki / połączenia', `${H.n} / ${H.segments}`)}
-    </div>`;
+    </div>` + stHtml(b);
   }
 
   const yesNo = v => v == null ? '—' : v ? 'tak' : 'nie';
   function clientHtml(s, b) {
-    if (!s.clients.length) return `<p class="muted">Brak logu klienta z tej sesji. Dodaj <span class="mono">StreamLight-*.log</span> z klienta.</p>`;
+    if (!s.clients.length) return s.st ? `<p class="muted">Brak logu klienta; dane StreamLight z tej sesji pochodzą ze StreamTweak (powyżej, w benchmarku).</p>` : `<p class="muted">Brak logu klienta z tej sesji. Dodaj <span class="mono">StreamLight-*.log</span> z klienta.</p>`;
     const list = b.clients.length ? b.clients : s.clients;
     const note = b.clients.length ? '' : '<p class="caveat">Żaden stream klienta nie pokrywa się z wybranym zakresem. Poniżej wszystkie streamy z tej sesji.</p>';
     return note + traceRangeHtml(b) + `<div class="two">${list.map(c => streamCard(s, c)).join('')}</div>
@@ -831,10 +1025,9 @@
 
   const CMP_ROWS = [
     ['Oceny (1–10)', null],
-    ['Ocena ogólna', x => x.scores && x.scores.overall, 1], ['FPS', x => x.scores && x.scores.fps, 1],
-    ['Stabilność', x => x.scores && x.scores.stability, 1], ['Opóźnienie', x => x.scores && x.scores.latency, 1],
-    ['Sieć', x => x.scores && x.scores.network, 1], ['Obraz', x => x.scores && x.scores.image, 1],
-    ['Zapas hosta (info)', x => x.scores && x.scores.headroom, 1],
+    ['Ocena ogólna', x => x.scores && x.scores.overall, 1],
+    ...['drops', 'rtt', 'hostlat', 'late', 'pacing', 'e2e'].map(k => [SS.Score.LABELS[k], x => x.scores && x.scores[k], 1]),
+    ...['fps', 'image', 'headroom'].map(k => [`${SS.Score.LABELS[k]} (info)`, x => x.scores && x.scores[k], 1]),
     ['Konfiguracja', null],
     ['Klient', x => x.streamer], ['Tryb', x => [x.codec, x.resolution, x.target_fps && '@' + x.target_fps].filter(Boolean).join(' ')],
     ['Bitrate ustawiony (Mb/s)', x => x.bitrate_setting_mbps, 0], ['Długość zakresu', x => x.duration_s, 't'],

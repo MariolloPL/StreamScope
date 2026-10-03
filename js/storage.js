@@ -148,7 +148,7 @@ SS.Report = (() => {
     L.push(`Date: ${SS.time.date(sum.date)}`);
     L.push(`Range: ${sum.range} (${SS.time.fmt(sum.duration_s)})`);
     if (sum.scores && sum.scores.overall != null) {
-      const sc = sum.scores, names = { fps: 'FPS', stability: 'stability', latency: 'latency', network: 'network', image: 'image', headroom: 'host headroom (info)' };
+      const sc = sum.scores, names = { drops: 'frame loss', rtt: 'network RTT', hostlat: 'host latency (frame periods)', late: 'late frames', pacing: 'client pacing', e2e: 'end-to-end latency', fps: 'FPS (info)', image: 'image (info)', headroom: 'host headroom (info)' };
       L.push(`Scores 1-10 (StreamScope): overall ${n(sc.overall)} · ` + Object.keys(names).filter(k => k in sc).map(k => `${names[k]} ${sc[k] == null ? 'n/a' : n(sc[k])}`).join(' · '));
     }
     if (sum.steam) {

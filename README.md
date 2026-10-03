@@ -36,6 +36,7 @@ Markery: wyłącz i włącz pad podłączony do klienta na początku i na końcu
   - sesje Vibepollo z API panelu (`/api/history/sessions`), łącząc reconnecty tak samo jak eksport w panelu; `import_dirs` służy tylko do jednorazowego przejęcia starych, ręcznie pobranych eksportów,
   - `streaming_log*.txt` Steama,
   - logi `StreamLight-*.log` / `Moonlight-*.log` z udostępnionego folderu klienta (np. `\\K12\StreamLightLogs`);
+  - historię StreamTweak (`%LOCALAPPDATA%\StreamTweak\sessions.json`): telemetria StreamLight (RTT, jitter, dropy, opóźnienie hosta mierzone przez klienta) i obciążenie hosta w czasie; sesje bez pliku Vibepollo też się pojawiają;
   - sesje diagnostyczne VRR z Moonlighta (`client_logs.vrr_dirs`, udostępniony folder `vrr-diagnostics` klienta): `Moonlight.log` oraz podsumowanie sekundowe z `.vrrtrace` (wyświetlane FPS, opóźnienie odbiór→ekran, odrzucone klatki), dzięki czemu statystyki klienta są dostępne dla wybranego zakresu;
 - udostępnia StreamScope w sieci domowej pod `http://<IP-PC>:8765/`. Każde urządzenie widzi te same sesje, zakresy i historię. Pliki wrzucone ręcznie też trafiają do archiwum.
 
@@ -77,6 +78,12 @@ js/storage.js           historia (localStorage), eksport/import, raport dla AI
 js/chart.js             wykresy SVG na wspólnej osi czasu
 js/app.js               interfejs
 ```
+
+## Werdykt i oceny 1–10
+
+Łączy podejście StreamScope i StreamTweak. Testy: straty klatek, sieć (RTT), opóźnienie hosta (w okresach klatki), spóźnione klatki (>2 okresy), płynność u klienta, opóźnienie całkowite. Każdy test korzysta z najlepszego dostępnego źródła i je podaje. Ocena = średnia testów, ale najwyżej 1,5 pkt powyżej najsłabszego; werdykt mówi, co ogranicza. FPS, obraz i zapas hosta są tylko informacyjne (jak w StreamTweak: limit gry i ekrany ładowania fałszują FPS).
+
+Porównanie dwóch sesji: „Porównaj z…” w nagłówku sesji — werdykty, testy i pomiary obok siebie oraz nałożone wykresy od początku zakresu; testy liczone z różnych źródeł są oznaczone.
 
 ## Zasady obliczeń
 

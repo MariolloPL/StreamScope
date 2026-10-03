@@ -43,6 +43,7 @@ DEFAULTS = {
     "vibepollo": {"enabled": True, "url": "https://localhost:47990", "username": "", "password": "", "max_sessions": 300, "import_dirs": []},
     "steam": {"enabled": True, "logs_dir": r"C:\Program Files (x86)\Steam\logs"},
     "client_logs": {"enabled": True, "dirs": []},
+    "streamtweak": {"enabled": True, "path": r"%LOCALAPPDATA%\StreamTweak\sessions.json"},
 }
 
 log = logging.getLogger("streamscope")
@@ -60,13 +61,14 @@ def load_config():
                 cfg[k] = v
     cfg["archive_dir"] = os.path.expandvars(cfg["archive_dir"])
     cfg["vibepollo"]["import_dirs"] = [os.path.expandvars(d) for d in cfg["vibepollo"].get("import_dirs") or []]
+    cfg["streamtweak"]["path"] = os.path.expandvars(cfg["streamtweak"].get("path") or "")
     return cfg
 
 
 # ---------------------------------------------------------------- archive
 
 class Archive:
-    SUBDIRS = ("vibepollo", "steam", "client", "trace", "manual")
+    SUBDIRS = ("vibepollo", "steam", "client", "trace", "streamtweak", "manual")
 
     def __init__(self, root):
         self.root = root
@@ -194,6 +196,27 @@ def collect_client(cfg, arc, status):
         status.set("client", False, "; ".join(errors[:3]), copied=copied)
     else:
         status.set("client", True, f"OK, skopiowano {copied}" if copied else "OK, bez zmian")
+
+
+# ---------------------------------------------------------------- StreamTweak
+
+def collect_streamtweak(cfg, arc, status):
+    """StreamTweak's session history (StreamLight telemetry + host load, ~600 points per session series).
+    One growing JSON file on this PC; copied whenever it changes."""
+    if not cfg.get("enabled", True):
+        return
+    p = cfg.get("path") or ""
+    if not os.path.isfile(p):
+        status.set("streamtweak", True, "nie znaleziono historii StreamTweak (pomijam)")
+        return
+    st = os.stat(p)
+    dst = arc.path("streamtweak/sessions.json")
+    if os.path.exists(dst) and os.path.getsize(dst) == st.st_size and os.path.getmtime(dst) >= st.st_mtime:
+        status.set("streamtweak", True, "OK, bez zmian")
+        return
+    with open(p, "rb") as f:
+        arc.write("streamtweak", "sessions.json", f.read())
+    status.set("streamtweak", True, "OK, zaktualizowano")
 
 
 # ---------------------------------------------------------------- Moonlight VRR diagnostic captures
@@ -642,7 +665,8 @@ class Collector(threading.Thread):
                 self.status.data["running"] = True
             # Quick local sources first, so a slow Vibepollo download never delays Steam/K12 logs.
             for name, fn, section in (("steam", collect_steam, "steam"), ("client", collect_client, "client_logs"),
-                                      ("vrr", collect_vrr, "client_logs"), ("vibepollo", collect_vibepollo, "vibepollo")):
+                                      ("vrr", collect_vrr, "client_logs"), ("streamtweak", collect_streamtweak, "streamtweak"),
+                                      ("vibepollo", collect_vibepollo, "vibepollo")):
                 c = self.cfg[section]
                 if not c.get("enabled", True):
                     self.status.set(name, True, "wyłączone")
@@ -668,6 +692,7 @@ class Collector(threading.Thread):
             try:
                 collect_client(self.cfg["client_logs"], self.arc, self.status)
                 collect_vrr(self.cfg["client_logs"], self.arc, self.status, self.state)
+                collect_streamtweak(self.cfg["streamtweak"], self.arc, self.status)
                 self.arc.write_doc("agent_state.json", self.state)
             except Exception as e:
                 log.exception("client collection failed")
