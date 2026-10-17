@@ -509,12 +509,18 @@ def export_name(d):
 
 
 GROUP_GAP = 120   # s between one session's end and the next start (same app) to treat them as one reconnect group
+STREAM_KEYS = ("app_name", "codec", "width", "height", "target_fps")
+
+
+def same_stream(a, b):
+    """A reconnect keeps the stream settings; a codec/mode switch is a new test, not part of the same session."""
+    return all(a.get(k) == b.get(k) for k in STREAM_KEYS)
 
 
 VIBE_FILE_RE = re.compile(r"^sunshine-session-.+\.json$", re.I)
 
 
-def import_vibepollo_dirs(cfg, arc):
+def import_vibepollo_dirs(cfg, arc, skip=()):
     """Older manual exports (e.g. Downloads) — the panel's history may not reach back that far."""
     n = 0
     for d in cfg.get("import_dirs") or []:
@@ -524,7 +530,7 @@ def import_vibepollo_dirs(cfg, arc):
             continue
         for name in names:
             # "(1)" copies of the same export are duplicates; StreamScope dedupes by content anyway.
-            if VIBE_FILE_RE.match(name) and "(" not in name:
+            if VIBE_FILE_RE.match(name) and "(" not in name and name not in skip:
                 src = os.path.join(d, name)
                 if not os.path.exists(arc.path(f"vibepollo/{name}")):
                     shutil.copyfile(src, arc.path(f"vibepollo/{name}"))
@@ -533,9 +539,17 @@ def import_vibepollo_dirs(cfg, arc):
 
 
 def collect_vibepollo(cfg, arc, status, state):
-    imported = import_vibepollo_dirs(cfg, arc)
-    if imported:
-        log.info("imported %d exported Vibepollo files", imported)
+    # The UI's manual exports merge reconnects across modes: sessions the panel still has come from the panel.
+    in_panel = set()
+    try:
+        collect_vibepollo_panel(cfg, arc, status, state, in_panel)
+    finally:
+        imported = import_vibepollo_dirs(cfg, arc, skip=in_panel)
+        if imported:
+            log.info("imported %d exported Vibepollo files", imported)
+
+
+def collect_vibepollo_panel(cfg, arc, status, state, in_panel):
     if not cfg.get("username"):
         status.set("vibepollo", False, "podaj login i hasło do panelu Vibepollo w Ustawieniach")
         return
@@ -562,12 +576,14 @@ def collect_vibepollo(cfg, arc, status, state):
     finished.sort(key=lambda i: i.get("start_time_unix") or 0)
     groups, cur = [], None
     for it in finished:
-        if cur and it.get("app_name") == cur[-1].get("app_name") and (it.get("start_time_unix") or 0) - (cur[-1].get("end_time_unix") or 0) <= GROUP_GAP:
+        if cur and same_stream(it, cur[-1]) and (it.get("start_time_unix") or 0) - (cur[-1].get("end_time_unix") or 0) <= GROUP_GAP:
             cur.append(it)
         else:
             cur = [it]
             groups.append(cur)
 
+    name = lambda g: export_name({"app_name": g[0].get("app_name"), "start_time_unix": g[0].get("start_time_unix")})
+    in_panel.update(name(g) for g in groups)
     done = set(state.get("vibepollo_groups", []))
     fails = state.setdefault("vibepollo_failures", {})     # group key → failed attempts
     MAX_TRIES = 2
@@ -575,7 +591,7 @@ def collect_vibepollo(cfg, arc, status, state):
     gkey = lambda g: ",".join(sorted(_sid(i) for i in g))
     # Sessions already in the archive (e.g. imported manual exports) need no download: same name = same session.
     for g in groups:
-        if gkey(g) not in done and os.path.exists(arc.path("vibepollo/" + export_name({"app_name": g[0].get("app_name"), "start_time_unix": g[0].get("start_time_unix")}))):
+        if gkey(g) not in done and os.path.exists(arc.path("vibepollo/" + name(g))):
             done.add(gkey(g))
     state["vibepollo_groups"] = sorted(done)
     pending = [g for g in reversed(groups) if gkey(g) not in done]                       # newest first
