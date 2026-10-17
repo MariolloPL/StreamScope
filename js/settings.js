@@ -45,8 +45,8 @@ SS.Settings = (() => {
       <section class="panel" aria-labelledby="sCl">
         <h2 id="sCl">Klient (K12)</h2>
         ${check('clOn', cl.enabled !== false, 'Zbieraj logi z klienta')}
-        ${area('clDirs', cl.dirs, 'Foldery z logami StreamLight/Moonlight', 'Udostępniony folder Temp klienta, np. \\\\10.10.10.177\\StreamLightLogs. Agent obserwuje go i kopiuje logi od razu po zmianie.')}
-        ${area('clVrr', cl.vrr_dirs, 'Foldery diagnostyki VRR Moonlighta', 'Np. \\\\10.10.10.177\\moonlight-vrr-diagnostics. Dane klatka po klatce.')}
+        ${area('clDirs', cl.dirs, 'Foldery z logami StreamLight/Moonlight', 'Udostępniony folder Temp klienta, np. \\\\K12\\StreamLightLogs. Agent obserwuje go i kopiuje logi od razu po zmianie.')}
+        ${area('clVrr', cl.vrr_dirs, 'Foldery diagnostyki VRR Moonlighta', 'Np. \\\\K12\\moonlight-vrr-diagnostics. Dane klatka po klatce.')}
       </section>
 
       <section class="panel" aria-labelledby="sOt">
